@@ -15,511 +15,428 @@
 const{useState,useRef,useCallback,useEffect}=React;
 
 // ============================================================
-// MESH WARP ENGINE - divides image into triangle grid and
-// displaces vertices per-frame for smooth organic deformation
+// STRIP WARP: slice image into N horizontal strips, transform each
+// This is reliable and creates smooth, visible deformation
 // ============================================================
-const MESH_RES = 12; // grid divisions
+const STRIPS = 24;
 
-function createMeshGrid(w, h, cols, rows) {
-  const verts = [];
-  for (let r = 0; r <= rows; r++) {
-    for (let c = 0; c <= cols; c++) {
-      verts.push({ x: (c / cols) * w, y: (r / rows) * h, u: c / cols, v: r / rows });
+function drawWarped(ctx, img, size, warpFn) {
+  var iw = img.width, ih = img.height;
+  var dx = (size - iw) / 2, dy = (size - ih) / 2;
+  var stripH = ih / STRIPS;
+  for (var i = 0; i < STRIPS; i++) {
+    var v = i / STRIPS;
+    var vc = (i + 0.5) / STRIPS;
+    var w = warpFn(vc);
+    var sx = w.sx !== undefined ? w.sx : 1;
+    var sy = w.sy !== undefined ? w.sy : 1;
+    var ox = w.ox || 0;
+    var oy = w.oy || 0;
+    var rot = w.rot || 0;
+    var skX = w.skewX || 0;
+    var al = w.alpha !== undefined ? w.alpha : 1;
+    var sW = iw * sx;
+    var sH = stripH * sy;
+    var sDx = dx + (iw - sW) / 2 + ox;
+    var sDy = dy + i * stripH + oy;
+    ctx.save();
+    ctx.globalAlpha = al;
+    if (rot !== 0 || skX !== 0) {
+      var pivotX = dx + iw / 2 + ox;
+      var pivotY = sDy + sH / 2;
+      ctx.translate(pivotX, pivotY);
+      ctx.rotate(rot);
+      ctx.transform(1, 0, skX, 1, 0, 0);
+      ctx.translate(-pivotX, -pivotY);
     }
-  }
-  return verts;
-}
-
-function drawMesh(ctx, img, verts, cols, rows, dx, dy) {
-  for (let r = 0; r < rows; r++) {
-    for (let c = 0; c < cols; c++) {
-      const i0 = r * (cols + 1) + c;
-      const i1 = i0 + 1;
-      const i2 = (r + 1) * (cols + 1) + c;
-      const i3 = i2 + 1;
-      const v0 = verts[i0], v1 = verts[i1], v2 = verts[i2], v3 = verts[i3];
-      drawTriangle(ctx, img, dx, dy, v0, v1, v2);
-      drawTriangle(ctx, img, dx, dy, v1, v3, v2);
-    }
+    ctx.drawImage(img, 0, i * stripH, iw, stripH, sDx, sDy, sW, sH);
+    ctx.restore();
   }
 }
 
-function drawTriangle(ctx, img, dx, dy, p0, p1, p2) {
-  const x0 = p0.x + dx, y0 = p0.y + dy;
-  const x1 = p1.x + dx, y1 = p1.y + dy;
-  const x2 = p2.x + dx, y2 = p2.y + dy;
-  const u0 = p0.u * img.width, v0t = p0.v * img.height;
-  const u1 = p1.u * img.width, v1t = p1.v * img.height;
-  const u2 = p2.u * img.width, v2t = p2.v * img.height;
-
-  ctx.save();
-  ctx.beginPath();
-  ctx.moveTo(x0, y0);
-  ctx.lineTo(x1, y1);
-  ctx.lineTo(x2, y2);
-  ctx.closePath();
-  ctx.clip();
-
-  const denom = u0 * (v1t - v2t) - u1 * (v0t - v2t) + u2 * (v0t - v1t);
-  if (Math.abs(denom) < 0.001) { ctx.restore(); return; }
-
-  const m11 = -(v0t * (x2 - x1) - v1t * (x2 - x0) + v2t * (x1 - x0)) / denom;
-  const m12 = (v0t * (y2 - y1) - v1t * (y2 - y0) + v2t * (y1 - y0)) / denom;
-  const m21 = (u0 * (x2 - x1) - u1 * (x2 - x0) + u2 * (x1 - x0)) / denom;
-  const m22 = -(u0 * (y2 - y1) - u1 * (y2 - y0) + u2 * (y1 - y0)) / denom;
-  const mdx = (u0 * (v2t * x1 - v1t * x2) - u1 * (v2t * x0 - v0t * x2) + u2 * (v1t * x0 - v0t * x1)) / denom;
-  const mdy = -(u0 * (v2t * y1 - v1t * y2) - u1 * (v2t * y0 - v0t * y2) + u2 * (v1t * y0 - v0t * y1)) / denom;
-
-  ctx.setTransform(m11, m12, m21, m22, mdx, mdy);
-  ctx.drawImage(img, 0, 0);
-  ctx.restore();
-}
-
-// Apply a displacement function to mesh vertices
-function warpMesh(baseVerts, w, h, displaceFn) {
-  return baseVerts.map(v => {
-    const d = displaceFn(v.u, v.v, v.x, v.y, w, h);
-    return { ...v, x: v.x + (d.dx || 0), y: v.y + (d.dy || 0) };
-  });
-}
-
-// ============================================================
-// FX helpers
-// ============================================================
-function drawDust(ctx, x, y, count, spread, alpha, sz) {
-  ctx.save(); ctx.globalAlpha = alpha; ctx.fillStyle = '#999';
-  for (let i = 0; i < count; i++) {
-    const a = (i / count) * Math.PI * 2 + x * 0.1;
-    const d = spread * (0.3 + Math.random() * 0.7);
+// FX
+function drawDust(ctx, x, y, n, spread, alpha, sz) {
+  ctx.save(); ctx.globalAlpha = alpha; ctx.fillStyle = '#aaa';
+  for (var i = 0; i < n; i++) {
+    var a = (i / n) * Math.PI * 2 + x * 0.1;
+    var d = spread * (0.3 + Math.random() * 0.7);
     ctx.beginPath();
-    ctx.arc(x + Math.cos(a) * d, y + Math.sin(a * 0.5) * d * 0.4 - Math.random() * spread * 0.3, sz * (0.5 + Math.random()), 0, Math.PI * 2);
+    ctx.arc(x + Math.cos(a) * d, y - Math.random() * spread * 0.5 + Math.sin(a) * d * 0.3, sz * (0.5 + Math.random()), 0, Math.PI * 2);
     ctx.fill();
   } ctx.restore();
 }
-function drawSpeedLines(ctx, x, y, h, count, alpha, len) {
+function drawLines(ctx, x, y, h, n, alpha, len) {
   ctx.save(); ctx.globalAlpha = alpha; ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5;
-  for (let i = 0; i < count; i++) {
-    const ly = y + (i / count) * h + Math.random() * 8;
-    const l = len * (0.4 + Math.random() * 0.6);
+  for (var i = 0; i < n; i++) {
+    var ly = y + (i / n) * h + Math.random() * 6;
+    var l = len * (0.4 + Math.random() * 0.6);
     ctx.beginPath(); ctx.moveTo(x - l, ly); ctx.lineTo(x, ly); ctx.stroke();
   } ctx.restore();
 }
-function drawImpact(ctx, x, y, r, alpha) {
+function drawSpark(ctx, x, y, r, alpha) {
   ctx.save(); ctx.globalAlpha = alpha; ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
-  for (let i = 0; i < 6; i++) {
-    const a = (i / 6) * Math.PI * 2;
+  for (var i = 0; i < 6; i++) {
+    var a = (i / 6) * Math.PI * 2;
     ctx.beginPath();
-    ctx.moveTo(x + Math.cos(a) * r * 0.3, y + Math.sin(a) * r * 0.3);
+    ctx.moveTo(x + Math.cos(a) * r * 0.25, y + Math.sin(a) * r * 0.25);
     ctx.lineTo(x + Math.cos(a) * r, y + Math.sin(a) * r);
     ctx.stroke();
   } ctx.restore();
 }
+function drawShadow(ctx, size) {
+  ctx.save(); ctx.beginPath();
+  ctx.ellipse(size / 2, size * 0.88, size * 0.28, size * 0.04, 0, 0, Math.PI * 2);
+  ctx.fillStyle = "rgba(0,0,0,0.22)"; ctx.fill(); ctx.restore();
+}
 
 // ============================================================
-// ANIMATIONS - each returns a function that displaces mesh verts
+// ANIMATIONS
 // ============================================================
-const ANIMATIONS = {
+var ANIMATIONS = {
   idle: {
     label: "Idle", desc: "Breathing with body sway",
-    generate: (ctx, img, frame, total, size) => {
-      const t = (frame / total) * Math.PI * 2;
-      const iw = img.width, ih = img.height;
-      const dx = (size - iw) / 2, dy = (size - ih) / 2;
-      const base = createMeshGrid(iw, ih, MESH_RES, MESH_RES);
-      const warped = warpMesh(base, iw, ih, (u, v) => {
-        // Breathe: chest expands, hips stable
-        const breathe = Math.sin(t) * iw * 0.02 * (1 - v) * Math.sin(v * Math.PI);
-        // Gentle sway
-        const sway = Math.sin(t * 0.5) * iw * 0.015 * (1 - v);
-        // Vertical breathe
-        const vBreath = Math.sin(t) * ih * 0.008 * (1 - v);
-        return { dx: breathe * (u - 0.5) * 2 + sway, dy: -vBreath };
+    generate: function(ctx, img, frame, total, size) {
+      var t = (frame / total) * Math.PI * 2;
+      drawWarped(ctx, img, size, function(v) {
+        var breath = Math.sin(t) * 0.03 * (1 - v);
+        var sway = Math.sin(t * 0.5) * 0.02 * (1 - v);
+        return { sx: 1 + breath * Math.sin(v * Math.PI), oy: -Math.sin(t) * size * 0.01 * (1 - v), ox: sway * size, rot: Math.sin(t * 0.5) * 0.015 * (1 - v) };
       });
-      drawMesh(ctx, img, warped, MESH_RES, MESH_RES, dx, dy);
     }
   },
   run: {
-    label: "Run", desc: "Full run cycle with leg drive",
-    generate: (ctx, img, frame, total, size) => {
-      const t = (frame / total) * Math.PI * 2;
-      const iw = img.width, ih = img.height;
-      const bounce = Math.abs(Math.sin(t)) * size * -0.04;
-      const dx = (size - iw) / 2, dy = (size - ih) / 2 + bounce;
-      const base = createMeshGrid(iw, ih, MESH_RES, MESH_RES);
-      const warped = warpMesh(base, iw, ih, (u, v) => {
-        // Legs: strong alternating swing from hips down
-        const legZone = Math.max(0, (v - 0.55) / 0.45); // 0 above hips, 0->1 for legs
-        const legSwing = Math.sin(t) * iw * 0.25 * legZone * legZone;
-        // Counter-swing for front/back leg
-        const legSplit = (u - 0.5) * Math.sin(t) * iw * 0.08 * legZone;
+    label: "Run", desc: "Full run with leg drive & lean",
+    generate: function(ctx, img, frame, total, size) {
+      var t = (frame / total) * Math.PI * 2;
+      var iw = img.width, ih = img.height;
+      var bounce = Math.abs(Math.sin(t)) * size * -0.04;
+      drawWarped(ctx, img, size, function(v) {
+        // Legs: strong skew for stride
+        var legAmt = Math.pow(Math.max(0, (v - 0.5) / 0.5), 1.5);
+        var legSkew = Math.sin(t) * 0.5 * legAmt;
         // Torso lean
-        const torsoZone = Math.min(v / 0.55, 1) * (1 - Math.max(0, (v - 0.55) / 0.45));
-        const lean = Math.sin(t) * iw * 0.06 * torsoZone;
-        // Arms swing opposite to legs
-        const armZone = v > 0.2 && v < 0.55 ? Math.sin((v - 0.2) / 0.35 * Math.PI) : 0;
-        const armSide = (u < 0.3 || u > 0.7) ? (u < 0.5 ? -1 : 1) : 0;
-        const armSwing = Math.sin(t + Math.PI) * iw * 0.08 * armZone * armSide;
-        // Head bob
-        const headZone = v < 0.2 ? (1 - v / 0.2) : 0;
-        const headBob = Math.sin(t * 2) * iw * 0.02 * headZone;
-        // Vertical compression on contact
-        const vSquash = Math.abs(Math.sin(t)) > 0.9 ? ih * 0.015 * v : 0;
-        return { dx: legSwing + lean + armSwing + headBob + legSplit, dy: vSquash };
+        var torsoAmt = v > 0.2 && v < 0.6 ? Math.sin((v - 0.2) / 0.4 * Math.PI) : 0;
+        var lean = Math.sin(t) * 0.08 * torsoAmt;
+        // Arms: opposite skew in arm zone
+        var armAmt = v > 0.2 && v < 0.5 ? Math.sin((v - 0.2) / 0.3 * Math.PI) : 0;
+        var armSkew = Math.sin(t + Math.PI) * 0.15 * armAmt;
+        // Head counter
+        var headAmt = v < 0.15 ? 1 - v / 0.15 : 0;
+        var headOx = Math.sin(t * 2) * size * 0.015 * headAmt;
+        // Contact squash
+        var squash = Math.abs(Math.sin(t)) > 0.92 ? 1.04 : 1;
+        return {
+          ox: headOx, oy: bounce * (1 - v * 0.3),
+          skewX: legSkew + lean + armSkew,
+          sx: squash, rot: Math.sin(t) * 0.06 * (0.5 - v)
+        };
       });
-      drawMesh(ctx, img, warped, MESH_RES, MESH_RES, dx, dy);
-      // FX
-      if (Math.abs(Math.sin(t)) > 0.85) drawDust(ctx, size / 2 + Math.sin(t) * 10, dy + ih, 5, size * 0.07, 0.35, size * 0.01);
-      drawSpeedLines(ctx, dx - 5, dy + ih * 0.3, ih * 0.5, 4, 0.12 + Math.abs(Math.sin(t)) * 0.15, size * 0.12);
+      var baseY = (size - img.height) / 2 + img.height + bounce;
+      if (Math.abs(Math.sin(t)) > 0.85) drawDust(ctx, size / 2 + Math.sin(t) * 12, baseY, 5, size * 0.07, 0.3, size * 0.01);
+      drawLines(ctx, (size - img.width) / 2 - 3, (size - img.height) / 2 + img.height * 0.25 + bounce, img.height * 0.5, 4, 0.1 + Math.abs(Math.sin(t)) * 0.15, size * 0.1);
     }
   },
   walk: {
     label: "Walk", desc: "Walking stride with weight shift",
-    generate: (ctx, img, frame, total, size) => {
-      const t = (frame / total) * Math.PI * 2;
-      const iw = img.width, ih = img.height;
-      const bounce = Math.abs(Math.sin(t)) * size * -0.015;
-      const dx = (size - iw) / 2, dy = (size - ih) / 2 + bounce;
-      const base = createMeshGrid(iw, ih, MESH_RES, MESH_RES);
-      const warped = warpMesh(base, iw, ih, (u, v) => {
-        const legZone = Math.max(0, (v - 0.5) / 0.5);
-        const legSwing = Math.sin(t) * iw * 0.14 * legZone * legZone;
-        const hipSway = Math.sin(t) * iw * 0.025 * (1 - Math.abs(v - 0.5) * 2);
-        const shoulderCounter = Math.sin(t + Math.PI) * iw * 0.03 * Math.max(0, 1 - v / 0.4);
-        const armZone = v > 0.25 && v < 0.55 ? Math.sin((v - 0.25) / 0.3 * Math.PI) : 0;
-        const armSide = (u < 0.25 || u > 0.75) ? (u < 0.5 ? -1 : 1) : 0;
-        const armSwing = Math.sin(t + Math.PI) * iw * 0.05 * armZone * armSide;
-        return { dx: legSwing + hipSway + shoulderCounter + armSwing, dy: 0 };
+    generate: function(ctx, img, frame, total, size) {
+      var t = (frame / total) * Math.PI * 2;
+      var bounce = Math.abs(Math.sin(t)) * size * -0.012;
+      drawWarped(ctx, img, size, function(v) {
+        var legAmt = Math.pow(Math.max(0, (v - 0.45) / 0.55), 1.3);
+        var legSkew = Math.sin(t) * 0.3 * legAmt;
+        var hipSway = Math.sin(t) * 0.02;
+        var shoulderAmt = v < 0.3 ? 1 - v / 0.3 : 0;
+        var shoulderCounter = Math.sin(t + Math.PI) * 0.04 * shoulderAmt;
+        return { oy: bounce, skewX: legSkew + hipSway + shoulderCounter, ox: Math.sin(t) * size * 0.01 * (0.5 - v) };
       });
-      drawMesh(ctx, img, warped, MESH_RES, MESH_RES, dx, dy);
     }
   },
   jump: {
-    label: "Jump", desc: "Anticipation, launch, air, land",
-    generate: (ctx, img, frame, total, size) => {
-      const t = frame / Math.max(total - 1, 1);
-      const iw = img.width, ih = img.height;
-      const arc = -Math.sin(t * Math.PI) * size * 0.25;
-      const dx = (size - iw) / 2, dy = (size - ih) / 2 + arc;
-      const base = createMeshGrid(iw, ih, MESH_RES, MESH_RES);
-      const warped = warpMesh(base, iw, ih, (u, v) => {
-        let ddx = 0, ddy = 0;
+    label: "Jump", desc: "Crouch, launch, tuck, land",
+    generate: function(ctx, img, frame, total, size) {
+      var t = frame / Math.max(total - 1, 1);
+      var arc = -Math.sin(t * Math.PI) * size * 0.25;
+      drawWarped(ctx, img, size, function(v) {
+        var ox = 0, oy = arc, sx = 1, sy = 1, skX = 0;
         if (t < 0.15) {
-          // Crouch: squash down, widen at bottom
-          const p = t / 0.15;
-          ddy = p * ih * 0.06 * v;
-          ddx = p * iw * 0.04 * (u - 0.5) * v;
+          // Crouch
+          var p = t / 0.15;
+          sy = 1 - p * 0.15;
+          sx = 1 + p * 0.08 * v;
+          oy = arc + p * size * 0.04 * v;
         } else if (t < 0.35) {
-          // Launch: stretch tall, narrow
-          const p = (t - 0.15) / 0.2;
-          ddy = -p * ih * 0.08 * (1 - v);
-          ddx = -p * iw * 0.03 * (u - 0.5);
-          // Legs extend down
-          const legZ = Math.max(0, (v - 0.6) / 0.4);
-          ddy += p * ih * 0.05 * legZ;
+          // Launch stretch
+          var p = (t - 0.15) / 0.2;
+          sy = 1 + p * 0.12 * (1 - v);
+          sx = 1 - p * 0.05;
+          var legZ = Math.max(0, (v - 0.6) / 0.4);
+          skX = -p * 0.15 * legZ;
         } else if (t < 0.65) {
-          // Air: tuck legs, arms up
-          const p = (t - 0.35) / 0.3;
-          const legZ = Math.max(0, (v - 0.55) / 0.45);
-          ddy -= legZ * ih * 0.12 * Math.sin(p * Math.PI);
-          ddx += (u - 0.5) * iw * 0.03 * Math.sin(p * Math.PI);
-          // Arms up
-          const armZ = v < 0.35 ? (1 - v / 0.35) : 0;
-          ddy -= armZ * ih * 0.04 * Math.sin(p * Math.PI);
+          // Tuck in air
+          var p = Math.sin(((t - 0.35) / 0.3) * Math.PI);
+          var legZ = Math.max(0, (v - 0.5) / 0.5);
+          oy = arc - legZ * size * 0.08 * p;
+          sx = 1 + 0.03 * p;
+          skX = 0.1 * p * legZ;
         } else if (t < 0.85) {
-          // Descend: extend legs
-          const p = (t - 0.65) / 0.2;
-          const legZ = Math.max(0, (v - 0.5) / 0.5);
-          ddy += legZ * ih * 0.06 * p;
+          // Extend
+          var p = (t - 0.65) / 0.2;
+          var legZ = Math.max(0, (v - 0.5) / 0.5);
+          oy = arc + legZ * size * 0.04 * p;
+          skX = -0.08 * p * legZ;
         } else {
-          // Land: heavy squash
-          const p = (t - 0.85) / 0.15;
-          ddy = p * ih * 0.08 * v;
-          ddx = p * iw * 0.06 * (u - 0.5) * v;
+          // Land squash
+          var p = (t - 0.85) / 0.15;
+          sy = 1 - p * 0.18;
+          sx = 1 + p * 0.12 * v;
+          oy = arc + p * size * 0.05 * v;
         }
-        return { dx: ddx, dy: ddy };
+        return { ox: ox, oy: oy, sx: sx, sy: sy, skewX: skX };
       });
-      drawMesh(ctx, img, warped, MESH_RES, MESH_RES, dx, dy);
-      if (t > 0.85) { const p = (t - 0.85) / 0.15; drawDust(ctx, size / 2, dy + ih + arc, 6 + Math.floor(p * 6), size * 0.12 * p, 0.4 * p, size * 0.015); }
+      if (t > 0.85) { var p = (t - 0.85) / 0.15; drawDust(ctx, size / 2, (size + img.height) / 2 + arc, 5 + Math.floor(p * 5), size * 0.1 * p, 0.35 * p, size * 0.013); }
     }
   },
   attack: {
-    label: "Attack", desc: "Wind-up strike with follow-through",
-    generate: (ctx, img, frame, total, size) => {
-      const t = frame / Math.max(total - 1, 1);
-      const iw = img.width, ih = img.height;
-      const dx = (size - iw) / 2, dy = (size - ih) / 2;
-      const base = createMeshGrid(iw, ih, MESH_RES, MESH_RES);
-      const warped = warpMesh(base, iw, ih, (u, v) => {
-        let ddx = 0, ddy = 0;
+    label: "Attack", desc: "Wind-up strike with impact",
+    generate: function(ctx, img, frame, total, size) {
+      var t = frame / Math.max(total - 1, 1);
+      drawWarped(ctx, img, size, function(v) {
+        var upper = Math.max(0, 1 - v / 0.55);
+        var lower = Math.max(0, (v - 0.55) / 0.45);
+        var ox = 0, skX = 0, rot = 0;
         if (t < 0.25) {
-          // Wind-up: pull back upper body, coil
-          const p = t / 0.25;
-          const upperZ = Math.max(0, 1 - v / 0.5);
-          ddx = -p * iw * 0.12 * upperZ;
-          ddy = p * ih * 0.03 * v; // slight crouch
-          // Twist torso
-          ddx += p * iw * 0.04 * (u - 0.5) * upperZ;
+          var p = t / 0.25;
+          ox = -p * size * 0.08 * upper;
+          skX = -p * 0.2 * upper;
+          rot = -p * 0.08 * upper;
         } else if (t < 0.45) {
-          // Strike: explosive forward thrust
-          const p = (t - 0.25) / 0.2;
-          const upperZ = Math.max(0, 1 - v / 0.55);
-          ddx = iw * (-0.12 + 0.35 * p) * upperZ;
-          // Leading edge stretches more
-          const leadStretch = u > 0.5 ? (u - 0.5) * 2 : 0;
-          ddx += p * iw * 0.1 * leadStretch * upperZ;
-          ddy = (1 - p) * ih * 0.03 * v;
-          // Legs plant
-          const legZ = Math.max(0, (v - 0.6) / 0.4);
-          ddx -= p * iw * 0.05 * legZ;
+          var p = (t - 0.25) / 0.2;
+          ox = size * (-0.08 + 0.25 * p) * upper;
+          skX = (-0.2 + 0.55 * p) * upper;
+          rot = (-0.08 + 0.2 * p) * upper;
+          ox += -size * 0.03 * p * lower;
         } else if (t < 0.6) {
-          // Impact hold
-          const p = (t - 0.45) / 0.15;
-          const upperZ = Math.max(0, 1 - v / 0.55);
-          ddx = iw * 0.23 * upperZ * (1 - p * 0.1);
-          const shake = Math.sin(p * Math.PI * 4) * iw * 0.02;
-          ddx += shake;
-          ddy += shake * 0.5;
+          var p = (t - 0.45) / 0.15;
+          var shake = Math.sin(p * Math.PI * 5) * size * 0.015;
+          ox = size * 0.17 * upper + shake;
+          skX = 0.35 * upper;
+          rot = 0.12 * upper * (1 - p * 0.3);
         } else {
-          // Recovery
-          const p = (t - 0.6) / 0.4;
-          const upperZ = Math.max(0, 1 - v / 0.55);
-          ddx = iw * 0.2 * (1 - p * p) * upperZ;
+          var p = (t - 0.6) / 0.4;
+          var ease = 1 - p * p;
+          ox = size * 0.17 * ease * upper;
+          skX = 0.35 * ease * upper;
+          rot = 0.12 * ease * upper;
         }
-        return { dx: ddx, dy: ddy };
+        return { ox: ox, skewX: skX, rot: rot };
       });
-      drawMesh(ctx, img, warped, MESH_RES, MESH_RES, dx, dy);
-      if (t > 0.4 && t < 0.6) { const p = (t - 0.4) / 0.2; drawImpact(ctx, dx + iw + iw * 0.08, dy + ih * 0.3, size * 0.1 * (1 - p), 0.7 * (1 - p)); }
+      if (t > 0.4 && t < 0.6) {
+        var p = 1 - (t - 0.4) / 0.2;
+        drawSpark(ctx, (size + img.width) / 2 + size * 0.1, (size - img.height) / 2 + img.height * 0.3, size * 0.1 * p, 0.8 * p);
+      }
     }
   },
   death: {
-    label: "Death", desc: "Collapse and dissolve",
-    generate: (ctx, img, frame, total, size) => {
-      const t = frame / Math.max(total - 1, 1);
-      const iw = img.width, ih = img.height;
-      const dx = (size - iw) / 2, dy = (size - ih) / 2;
-      const base = createMeshGrid(iw, ih, MESH_RES, MESH_RES);
-      const warped = warpMesh(base, iw, ih, (u, v) => {
-        // Tip over sideways with progressive collapse from top
-        const fallProgress = t * t;
-        const topDown = (1 - v); // head falls more
-        const rotation = fallProgress * 1.4;
-        // Simulate rotation by moving top right and bottom stays
-        const ddx = topDown * Math.sin(rotation) * iw * 0.6 * fallProgress;
-        const ddy = topDown * (1 - Math.cos(rotation)) * ih * 0.3 * fallProgress + fallProgress * ih * 0.1 * v;
-        // Crumple effect
-        const crumple = Math.sin(u * Math.PI * 3 + t * 5) * iw * 0.02 * fallProgress;
-        return { dx: ddx + crumple, dy: ddy };
+    label: "Death", desc: "Collapse sideways and fade",
+    generate: function(ctx, img, frame, total, size) {
+      var t = frame / Math.max(total - 1, 1);
+      var fall = t * t;
+      drawWarped(ctx, img, size, function(v) {
+        var topBias = 1 - v;
+        var rot = fall * 1.3 * topBias;
+        var ox = fall * size * 0.2 * topBias;
+        var oy = fall * size * 0.12 * v;
+        var wobble = Math.sin(v * Math.PI * 3 + t * 8) * size * 0.008 * fall;
+        return { ox: ox + wobble, oy: oy, rot: rot * 0.3, alpha: 1 - t * 0.75 };
       });
-      ctx.save();
-      ctx.globalAlpha = 1 - t * 0.7;
-      drawMesh(ctx, img, warped, MESH_RES, MESH_RES, dx, dy);
-      ctx.restore();
-      if (t > 0.3) drawDust(ctx, size / 2 + t * iw * 0.3, dy + ih, 4 + Math.floor(t * 8), size * 0.1 * t, 0.3, size * 0.012);
+      if (t > 0.25) drawDust(ctx, size / 2 + fall * size * 0.15, (size + img.height) / 2, 3 + Math.floor(t * 8), size * 0.08 * t, 0.25, size * 0.01);
     }
   },
   hit: {
     label: "Hit/Hurt", desc: "Impact recoil with flash",
-    generate: (ctx, img, frame, total, size) => {
-      const t = frame / Math.max(total - 1, 1);
-      const iw = img.width, ih = img.height;
-      const shake = Math.sin(t * Math.PI * 6) * size * 0.035 * (1 - t);
-      const knock = Math.sin(t * Math.PI) * size * -0.05;
-      const dx = (size - iw) / 2 + shake + knock, dy = (size - ih) / 2;
-      const base = createMeshGrid(iw, ih, MESH_RES, MESH_RES);
-      const warped = warpMesh(base, iw, ih, (u, v) => {
-        // Bend backwards from impact
-        const recoil = Math.sin(t * Math.PI);
-        const bend = recoil * iw * 0.08 * (1 - v); // head goes back more
-        const squish = recoil * iw * 0.03 * Math.sin(v * Math.PI); // mid-body compression
-        // Wobble
-        const wobble = Math.sin(t * Math.PI * 4 + v * Math.PI * 2) * iw * 0.015 * (1 - t);
-        return { dx: -bend + wobble + squish * (u - 0.5) * 2, dy: recoil * ih * 0.02 * v };
+    generate: function(ctx, img, frame, total, size) {
+      var t = frame / Math.max(total - 1, 1);
+      var shake = Math.sin(t * Math.PI * 7) * size * 0.03 * (1 - t);
+      var knock = Math.sin(t * Math.PI) * size * -0.045;
+      drawWarped(ctx, img, size, function(v) {
+        var recoil = Math.sin(t * Math.PI);
+        var bend = recoil * 0.12 * (1 - v);
+        var wobble = Math.sin(t * Math.PI * 5 + v * Math.PI * 3) * 0.02 * (1 - t);
+        var squeeze = recoil * 0.04 * Math.sin(v * Math.PI);
+        return { ox: shake + knock - bend * size * 0.5, skewX: -bend * 0.8 + wobble, sx: 1 - squeeze, oy: recoil * size * 0.015 * v };
       });
-      drawMesh(ctx, img, warped, MESH_RES, MESH_RES, dx, dy);
-      if (t < 0.25) {
-        ctx.save(); ctx.globalAlpha = (1 - t / 0.25) * 0.5;
-        ctx.fillStyle = '#fff'; ctx.fillRect(dx, dy, iw, ih);
+      if (t < 0.2) {
+        var fa = (1 - t / 0.2) * 0.5;
+        ctx.save(); ctx.globalAlpha = fa; ctx.fillStyle = '#fff';
+        ctx.fillRect((size - img.width) / 2 + knock, (size - img.height) / 2, img.width, img.height);
         ctx.restore();
-        drawImpact(ctx, dx + iw * 0.3, dy + ih * 0.25, size * 0.08, 0.8 * (1 - t / 0.25));
+        drawSpark(ctx, (size - img.width) / 2 + img.width * 0.35, (size - img.height) / 2 + img.height * 0.25, size * 0.09, 0.8 * (1 - t / 0.2));
       }
     }
   },
   spin: {
-    label: "Spin", desc: "Full 360 rotation",
-    generate: (ctx, img, frame, total, size) => {
-      const t = (frame / total) * Math.PI * 2;
-      const iw = img.width, ih = img.height;
-      const dx = (size - iw) / 2, dy = (size - ih) / 2;
-      const base = createMeshGrid(iw, ih, MESH_RES, MESH_RES);
-      const warped = warpMesh(base, iw, ih, (u, v) => {
-        // Each row rotates with slight delay for helix effect
-        const rowPhase = t + v * 0.4;
-        const scaleX = Math.cos(rowPhase);
-        const newX = 0.5 + (u - 0.5) * scaleX;
-        return { dx: (newX - u) * iw, dy: Math.sin(rowPhase) * ih * 0.01 };
+    label: "Spin", desc: "Full 360 helix rotation",
+    generate: function(ctx, img, frame, total, size) {
+      var t = (frame / total) * Math.PI * 2;
+      drawWarped(ctx, img, size, function(v) {
+        var phase = t + v * 0.5;
+        var scaleX = Math.cos(phase);
+        return { sx: Math.abs(scaleX) * 0.85 + 0.15, ox: (1 - Math.abs(scaleX)) * (scaleX > 0 ? -1 : 1) * size * 0.02 };
       });
-      drawMesh(ctx, img, warped, MESH_RES, MESH_RES, dx, dy);
-      const spd = Math.abs(Math.sin(t));
-      if (spd > 0.6) drawSpeedLines(ctx, dx - 8, dy + ih * 0.2, ih * 0.6, 4, (spd - 0.6) * 0.6, size * 0.1);
+      var spd = Math.abs(Math.sin(t));
+      if (spd > 0.6) drawLines(ctx, (size - img.width) / 2 - 5, (size - img.height) / 2 + img.height * 0.15, img.height * 0.7, 4, (spd - 0.6) * 0.7, size * 0.08);
     }
-  },
+  }
 };
 
-const SIZES = [32, 64, 128, 256, 512];
-const FRAME_OPTIONS = [2, 3, 4, 6, 8, 10, 12, 16];
-function getPingPongMapping(fi, tf) { const uc = Math.ceil((tf + 1) / 2); return { frame: fi < uc ? fi : tf - fi, total: uc }; }
+var SIZES = [32, 64, 128, 256, 512];
+var FRAME_OPTIONS = [2, 3, 4, 6, 8, 10, 12, 16];
+function getPingPongMapping(fi, tf) { var uc = Math.ceil((tf + 1) / 2); return { frame: fi < uc ? fi : tf - fi, total: uc }; }
 
 function App() {
-  const [image, setImage] = useState(null);
-  const [imgEl, setImgEl] = useState(null);
-  const [selectedAnims, setSelectedAnims] = useState(["idle", "run", "walk", "jump"]);
-  const [frameCount, setFrameCount] = useState(8);
-  const [charSize, setCharSize] = useState(128);
-  const [addShadow, setAddShadow] = useState(true);
-  const [padding, setPadding] = useState(0);
-  const [bgTransparent, setBgTransparent] = useState(true);
-  const [spriteSheet, setSpriteSheet] = useState(null);
-  const [previewAnim, setPreviewAnim] = useState(null);
-  const [previewFrame, setPreviewFrame] = useState(0);
-  const [playing, setPlaying] = useState(true);
-  const fileInputRef = useRef(null);
+  var s = useState, r = useRef, cb = useCallback, eff = useEffect;
+  var _img = s(null), image = _img[0], setImage = _img[1];
+  var _imE = s(null), imgEl = _imE[0], setImgEl = _imE[1];
+  var _sa = s(["idle","run","walk","jump"]), selectedAnims = _sa[0], setSelectedAnims = _sa[1];
+  var _fc = s(8), frameCount = _fc[0], setFrameCount = _fc[1];
+  var _cs = s(128), charSize = _cs[0], setCharSize = _cs[1];
+  var _sh = s(true), addShadow = _sh[0], setAddShadow = _sh[1];
+  var _pd = s(0), padding = _pd[0], setPadding = _pd[1];
+  var _bg = s(true), bgTransparent = _bg[0], setBgTransparent = _bg[1];
+  var _ss = s(null), spriteSheet = _ss[0], setSpriteSheet = _ss[1];
+  var _pa = s(null), previewAnim = _pa[0], setPreviewAnim = _pa[1];
+  var _pf = s(0), previewFrame = _pf[0], setPreviewFrame = _pf[1];
+  var _pl = s(true), playing = _pl[0], setPlaying = _pl[1];
+  var fileInputRef = r(null);
 
-  const handleUpload = useCallback((e) => {
-    const file = (e.target.files || [])[0]; if (!file) return;
-    const url = URL.createObjectURL(file); setImage(url);
-    const img = new Image(); img.onload = () => setImgEl(img); img.src = url;
+  var handleUpload = cb(function(e) {
+    var file = (e.target.files || [])[0]; if (!file) return;
+    var url = URL.createObjectURL(file); setImage(url);
+    var img = new Image(); img.onload = function() { setImgEl(img); }; img.src = url;
   }, []);
-  const handleDrop = useCallback((e) => {
-    e.preventDefault(); const file = (e.dataTransfer.files || [])[0];
+  var handleDrop = cb(function(e) {
+    e.preventDefault(); var file = (e.dataTransfer.files || [])[0];
     if (!file || !file.type.startsWith("image/")) return;
-    const url = URL.createObjectURL(file); setImage(url);
-    const img = new Image(); img.onload = () => setImgEl(img); img.src = url;
+    var url = URL.createObjectURL(file); setImage(url);
+    var img = new Image(); img.onload = function() { setImgEl(img); }; img.src = url;
   }, []);
-  const toggleAnim = (key) => setSelectedAnims(prev => prev.includes(key) ? prev.filter(a => a !== key) : [...prev, key]);
+  var toggleAnim = function(key) { setSelectedAnims(function(prev) { return prev.includes(key) ? prev.filter(function(a){return a!==key}) : prev.concat([key]); }); };
 
-  const fitImage = useCallback((img, targetSize) => {
-    const scale = (targetSize * 0.75) / Math.max(img.width, img.height);
-    const c = document.createElement("canvas");
+  var fitImage = cb(function(img, targetSize) {
+    var scale = (targetSize * 0.75) / Math.max(img.width, img.height);
+    var c = document.createElement("canvas");
     c.width = Math.round(img.width * scale); c.height = Math.round(img.height * scale);
-    const cx = c.getContext("2d"); cx.imageSmoothingEnabled = charSize > 64;
+    var cx = c.getContext("2d"); cx.imageSmoothingEnabled = charSize > 64;
     cx.drawImage(img, 0, 0, c.width, c.height);
-    const fitted = new Image(); fitted.src = c.toDataURL(); fitted.width = c.width; fitted.height = c.height;
+    var fitted = new Image(); fitted.src = c.toDataURL(); fitted.width = c.width; fitted.height = c.height;
     return fitted;
   }, [charSize]);
 
-  const drawShadow2 = (ctx, size) => { ctx.save(); ctx.beginPath(); ctx.ellipse(size / 2, size * 0.85, size * 0.28, size * 0.045, 0, 0, Math.PI * 2); ctx.fillStyle = "rgba(0,0,0,0.25)"; ctx.fill(); ctx.restore(); };
-
-  // AUTO-GENERATE on any change
-  useEffect(() => {
+  // AUTO-GENERATE
+  eff(function() {
     if (!imgEl || selectedAnims.length === 0) { setSpriteSheet(null); return; }
-    const fitted = fitImage(imgEl, charSize);
-    const doGenerate = () => {
-      const cellSize = charSize + padding * 2;
-      const canvas = document.createElement("canvas");
-      canvas.width = frameCount * cellSize; canvas.height = selectedAnims.length * cellSize;
-      const ctx = canvas.getContext("2d"); ctx.imageSmoothingEnabled = charSize > 64;
-      if (!bgTransparent) { ctx.fillStyle = "#1a1a2e"; ctx.fillRect(0, 0, canvas.width, canvas.height); }
-      selectedAnims.forEach((animKey, row) => {
-        const anim = ANIMATIONS[animKey];
-        for (let f = 0; f < frameCount; f++) {
-          const oc = document.createElement("canvas"); oc.width = cellSize; oc.height = cellSize;
-          const octx = oc.getContext("2d"); octx.imageSmoothingEnabled = charSize > 64;
-          octx.save(); octx.translate(padding, padding);
-          if (addShadow) drawShadow2(octx, charSize);
-          const { frame: mf, total: ut } = getPingPongMapping(f, frameCount);
-          anim.generate(octx, fitted, mf, ut, charSize);
-          octx.restore();
-          ctx.drawImage(oc, f * cellSize, row * cellSize);
-        }
-      });
-      setSpriteSheet(canvas.toDataURL("image/png"));
-      setPreviewAnim(prev => selectedAnims.includes(prev) ? prev : selectedAnims[0]);
-      setPreviewFrame(0);
+    var fitted = fitImage(imgEl, charSize);
+    var doGen = function() {
+      try {
+        var cellSize = charSize + padding * 2;
+        var canvas = document.createElement("canvas");
+        canvas.width = frameCount * cellSize; canvas.height = selectedAnims.length * cellSize;
+        var ctx = canvas.getContext("2d"); ctx.imageSmoothingEnabled = charSize > 64;
+        if (!bgTransparent) { ctx.fillStyle = "#1a1a2e"; ctx.fillRect(0, 0, canvas.width, canvas.height); }
+        selectedAnims.forEach(function(animKey, row) {
+          var anim = ANIMATIONS[animKey]; if (!anim) return;
+          for (var f = 0; f < frameCount; f++) {
+            var oc = document.createElement("canvas"); oc.width = cellSize; oc.height = cellSize;
+            var octx = oc.getContext("2d"); octx.imageSmoothingEnabled = charSize > 64;
+            octx.save(); octx.translate(padding, padding);
+            if (addShadow) drawShadow(octx, charSize);
+            var m = getPingPongMapping(f, frameCount);
+            anim.generate(octx, fitted, m.frame, m.total, charSize);
+            octx.restore();
+            ctx.drawImage(oc, f * cellSize, row * cellSize);
+          }
+        });
+        setSpriteSheet(canvas.toDataURL("image/png"));
+        setPreviewAnim(function(prev) { return selectedAnims.includes(prev) ? prev : selectedAnims[0]; });
+        setPreviewFrame(0);
+      } catch(e) { console.error("Generate error:", e); }
     };
-    if (fitted.complete) doGenerate(); else fitted.onload = doGenerate;
+    if (fitted.complete) doGen(); else fitted.onload = doGen;
   }, [imgEl, selectedAnims, frameCount, charSize, addShadow, padding, bgTransparent, fitImage]);
 
-  // Preview animation loop
-  useEffect(() => {
+  // Preview loop
+  eff(function() {
     if (!spriteSheet || !previewAnim || !playing) return;
-    let f = 0;
-    const id = setInterval(() => { f = (f + 1) % frameCount; setPreviewFrame(f); }, 100);
-    return () => clearInterval(id);
+    var f = 0;
+    var id = setInterval(function() { f = (f + 1) % frameCount; setPreviewFrame(f); }, 100);
+    return function() { clearInterval(id); };
   }, [spriteSheet, previewAnim, frameCount, playing]);
 
-  const PreviewCanvas = useCallback(() => {
-    const ref = useRef(null);
-    useEffect(() => {
+  var PreviewCanvas = cb(function() {
+    var ref = useRef(null);
+    eff(function() {
       if (!spriteSheet || !ref.current) return;
-      const img = new Image(); img.onload = () => {
-        const cs = charSize + padding * 2; const c = ref.current; c.width = cs; c.height = cs;
-        const ctx = c.getContext("2d"); ctx.imageSmoothingEnabled = charSize > 64; ctx.clearRect(0, 0, cs, cs);
-        const row = selectedAnims.indexOf(previewAnim); if (row < 0) return;
+      var img = new Image(); img.onload = function() {
+        var cs = charSize + padding * 2; var c = ref.current; c.width = cs; c.height = cs;
+        var ctx = c.getContext("2d"); ctx.imageSmoothingEnabled = charSize > 64; ctx.clearRect(0, 0, cs, cs);
+        var row = selectedAnims.indexOf(previewAnim); if (row < 0) return;
         ctx.drawImage(img, previewFrame * cs, row * cs, cs, cs, 0, 0, cs, cs);
       }; img.src = spriteSheet;
     }, [previewFrame, previewAnim, spriteSheet]);
-    return React.createElement("canvas", { ref, style: { width: Math.max(charSize + padding * 2, 128), height: Math.max(charSize + padding * 2, 128), imageRendering: charSize <= 64 ? "pixelated" : "auto" }, className: "border border-zinc-700 rounded bg-zinc-900/50" });
+    return React.createElement("canvas", { ref: ref, style: { width: Math.max(charSize + padding * 2, 128), height: Math.max(charSize + padding * 2, 128), imageRendering: charSize <= 64 ? "pixelated" : "auto" }, className: "border border-zinc-700 rounded bg-zinc-900/50" });
   }, [spriteSheet, previewFrame, previewAnim, charSize, padding, selectedAnims]);
 
-  const pingPongLabel = (() => { const s = []; for (let i = 0; i < frameCount; i++) { s.push(getPingPongMapping(i, frameCount).frame + 1); } return s.join("-"); })();
+  var pingPongLabel = (function() { var s = []; for (var i = 0; i < frameCount; i++) { s.push(getPingPongMapping(i, frameCount).frame + 1); } return s.join("-"); })();
 
-  // --- RENDER ---
-  const E = React.createElement;
-  const btn = (active, onClick, children) => E("button", { onClick, className: "px-3 py-1.5 rounded-lg text-sm font-mono transition-all " + (active ? "bg-violet-600 text-white shadow-lg shadow-violet-600/25" : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700") }, children);
-  const chk = (label, state, set) => E("label", { className: "flex items-center gap-3 p-2.5 rounded-lg bg-zinc-900/50 border border-zinc-800 cursor-pointer hover:border-zinc-700 transition-all" },
-    E("div", { className: "w-5 h-5 rounded flex items-center justify-center transition-all " + (state ? "bg-violet-600" : "bg-zinc-700"), onClick: (e) => { e.preventDefault(); set(!state); } }, state && E("span", { className: "text-white text-xs" }, "\u2713")),
-    E("span", { className: "text-sm text-zinc-300" }, label));
+  var E = React.createElement;
+  var btn = function(active, onClick, ch) { return E("button", { onClick: onClick, className: "px-3 py-1.5 rounded-lg text-sm font-mono transition-all " + (active ? "bg-violet-600 text-white shadow-lg shadow-violet-600/25" : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700") }, ch); };
+  var chk = function(label, state, set) { return E("label", { className: "flex items-center gap-3 p-2.5 rounded-lg bg-zinc-900/50 border border-zinc-800 cursor-pointer hover:border-zinc-700 transition-all" },
+    E("div", { className: "w-5 h-5 rounded flex items-center justify-center transition-all " + (state ? "bg-violet-600" : "bg-zinc-700"), onClick: function(e) { e.preventDefault(); set(!state); } }, state && E("span", { className: "text-white text-xs" }, "\u2713")),
+    E("span", { className: "text-sm text-zinc-300" }, label)); };
 
   return E("div", { className: "min-h-screen bg-zinc-950 text-zinc-100 p-4 md:p-8" },
     E("div", { className: "max-w-6xl mx-auto" },
       E("div", { className: "mb-8" },
         E("h1", { className: "text-3xl font-bold tracking-tight bg-gradient-to-r from-violet-400 to-amber-300 bg-clip-text text-transparent" }, "Sprite Sheet Generator"),
-        E("p", { className: "text-zinc-500 text-sm mt-1" }, "Upload a character \u2192 pick animations \u2192 export sprite sheet")),
+        E("p", { className: "text-zinc-500 text-sm mt-1" }, "Upload a character \u2192 pick animations \u2192 auto-generated sprite sheet")),
       E("div", { className: "grid grid-cols-1 lg:grid-cols-3 gap-6" },
-        // LEFT COLUMN
         E("div", { className: "lg:col-span-1 space-y-5" },
-          // Upload
-          E("div", { onDrop: handleDrop, onDragOver: e => e.preventDefault(), onClick: () => fileInputRef.current && fileInputRef.current.click(),
+          E("div", { onDrop: handleDrop, onDragOver: function(e){e.preventDefault()}, onClick: function(){fileInputRef.current && fileInputRef.current.click()},
             className: "border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-all " + (image ? "border-violet-500/50 bg-violet-500/5" : "border-zinc-700 hover:border-zinc-500 bg-zinc-900/50") },
             E("input", { ref: fileInputRef, type: "file", accept: "image/*", onChange: handleUpload, className: "hidden" }),
             image ? E("div", { className: "flex flex-col items-center gap-3" }, E("img", { src: image, className: "max-h-32 max-w-32 object-contain", style: { imageRendering: charSize <= 64 ? "pixelated" : "auto" } }), E("span", { className: "text-xs text-zinc-400" }, "Click to change"))
               : E("div", { className: "py-4" }, E("div", { className: "text-4xl mb-2 opacity-40" }, "\uD83C\uDFAE"), E("p", { className: "text-sm text-zinc-400" }, "Drop character image here"), E("p", { className: "text-xs text-zinc-600 mt-1" }, "PNG with transparency works best"))),
-          // Size
           E("div", null, E("label", { className: "text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2 block" }, "Frame Size"),
-            E("div", { className: "flex flex-wrap gap-2" }, SIZES.map(s => btn(charSize === s, () => setCharSize(s), s + "px")))),
-          // Frames
+            E("div", { className: "flex flex-wrap gap-2" }, SIZES.map(function(s) { return btn(charSize === s, function(){setCharSize(s)}, s + "px"); }))),
           E("div", null, E("label", { className: "text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2 block" }, "Frames per Animation"),
-            E("div", { className: "flex flex-wrap gap-2" }, FRAME_OPTIONS.map(f => btn(frameCount === f, () => setFrameCount(f), f))),
+            E("div", { className: "flex flex-wrap gap-2" }, FRAME_OPTIONS.map(function(f) { return btn(frameCount === f, function(){setFrameCount(f)}, f); })),
             E("p", { className: "text-xs text-zinc-600 mt-2 font-mono" }, "Cycle: " + pingPongLabel)),
-          // Options
           E("div", null, E("label", { className: "text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2 block" }, "Options"),
             E("div", { className: "space-y-2" }, chk("Drop Shadow", addShadow, setAddShadow), chk("Transparent BG", bgTransparent, setBgTransparent),
               E("div", { className: "flex items-center gap-3 p-2.5 rounded-lg bg-zinc-900/50 border border-zinc-800" },
                 E("span", { className: "text-sm text-zinc-300" }, "Padding"),
-                E("input", { type: "range", min: 0, max: 16, value: padding, onChange: e => setPadding(+e.target.value), className: "flex-1 accent-violet-500" }),
+                E("input", { type: "range", min: 0, max: 16, value: padding, onChange: function(e){setPadding(+e.target.value)}, className: "flex-1 accent-violet-500" }),
                 E("span", { className: "text-xs font-mono text-zinc-500 w-8 text-right" }, padding + "px"))))),
-        // RIGHT COLUMN
         E("div", { className: "lg:col-span-2 space-y-5" },
           E("div", null, E("label", { className: "text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2 block" }, "Animation Cycles"),
             E("div", { className: "grid grid-cols-2 sm:grid-cols-4 gap-2" },
-              Object.entries(ANIMATIONS).map(([key, anim]) =>
-                E("button", { key, onClick: () => toggleAnim(key), className: "p-3 rounded-xl text-left transition-all border " + (selectedAnims.includes(key) ? "bg-violet-600/15 border-violet-500/50 shadow-lg shadow-violet-600/10" : "bg-zinc-900/50 border-zinc-800 hover:border-zinc-700") },
-                  E("div", { className: "text-sm font-semibold text-zinc-200" }, anim.label), E("div", { className: "text-xs text-zinc-500 mt-0.5" }, anim.desc))))),
-          // Output
+              Object.entries(ANIMATIONS).map(function(entry) { var key = entry[0], anim = entry[1];
+                return E("button", { key: key, onClick: function(){toggleAnim(key)}, className: "p-3 rounded-xl text-left transition-all border " + (selectedAnims.includes(key) ? "bg-violet-600/15 border-violet-500/50 shadow-lg shadow-violet-600/10" : "bg-zinc-900/50 border-zinc-800 hover:border-zinc-700") },
+                  E("div", { className: "text-sm font-semibold text-zinc-200" }, anim.label), E("div", { className: "text-xs text-zinc-500 mt-0.5" }, anim.desc)); }))),
           spriteSheet && E("div", { className: "space-y-4" },
             E("div", { className: "flex gap-4 items-start flex-wrap" },
               E("div", { className: "flex-shrink-0" },
                 E("label", { className: "text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2 block" }, "Preview"),
                 E("div", { className: "flex flex-col items-center gap-2" },
                   E(PreviewCanvas, null),
-                  E("div", { className: "flex gap-1 flex-wrap" }, selectedAnims.map(a => E("button", { key: a, onClick: () => setPreviewAnim(a), className: "px-2 py-1 rounded text-xs transition-all " + (previewAnim === a ? "bg-violet-600 text-white" : "bg-zinc-800 text-zinc-400") }, ANIMATIONS[a].label))),
-                  E("button", { onClick: () => setPlaying(!playing), className: "text-xs text-zinc-500 hover:text-zinc-300" }, playing ? "\u23F8 Pause" : "\u25B6 Play"))),
+                  E("div", { className: "flex gap-1 flex-wrap" }, selectedAnims.map(function(a) { return E("button", { key: a, onClick: function(){setPreviewAnim(a)}, className: "px-2 py-1 rounded text-xs transition-all " + (previewAnim === a ? "bg-violet-600 text-white" : "bg-zinc-800 text-zinc-400") }, ANIMATIONS[a].label); })),
+                  E("button", { onClick: function(){setPlaying(!playing)}, className: "text-xs text-zinc-500 hover:text-zinc-300" }, playing ? "\u23F8 Pause" : "\u25B6 Play"))),
               E("div", { className: "flex-1 text-xs text-zinc-500 space-y-1 pt-6" },
                 E("p", null, E("span", { className: "text-zinc-400" }, "Sheet: "), frameCount * (charSize + padding * 2) + "\u00d7" + selectedAnims.length * (charSize + padding * 2) + "px"),
                 E("p", null, E("span", { className: "text-zinc-400" }, "Cell: "), (charSize + padding * 2) + "px"),
                 E("p", null, E("span", { className: "text-zinc-400" }, "Frames: "), frameCount * selectedAnims.length),
                 E("p", null, E("span", { className: "text-zinc-400" }, "Cycle: "), E("span", { className: "font-mono text-violet-400" }, pingPongLabel)),
-                E("p", { className: "text-zinc-600 mt-2" }, "Rows: " + selectedAnims.map(a => ANIMATIONS[a].label).join(", ")))),
+                E("p", { className: "text-zinc-600 mt-2" }, "Rows: " + selectedAnims.map(function(a){return ANIMATIONS[a].label}).join(", ")))),
             E("div", null, E("label", { className: "text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2 block" }, "Sprite Sheet"),
               E("div", { className: "overflow-auto rounded-xl border border-zinc-800 p-2", style: { background: "repeating-conic-gradient(#27272a 0% 25%,#18181b 0% 50%) 0 0/16px 16px" } },
                 E("img", { src: spriteSheet, className: "max-w-full", style: { imageRendering: charSize <= 64 ? "pixelated" : "auto" } }))),
