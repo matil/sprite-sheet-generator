@@ -195,7 +195,7 @@ function getPingPong(fi,tf){var uc=Math.ceil((tf+1)/2);return{frame:fi<uc?fi:tf-
 function App(){
   var _img=useState(null),image=_img[0],setImage=_img[1];
   var _imE=useState(null),imgEl=_imE[0],setImgEl=_imE[1];
-  var _sa=useState(["idle","run","walk","jump"]),selectedAnims=_sa[0],setSelectedAnims=_sa[1];
+  var _sa=useState(["idle"]),selectedAnims=_sa[0],setSelectedAnims=_sa[1];
   var _fc=useState(8),frameCount=_fc[0],setFrameCount=_fc[1];
   var _cs=useState(128),charSize=_cs[0],setCharSize=_cs[1];
   var _sh=useState(true),addShadow=_sh[0],setAddShadow=_sh[1];
@@ -218,7 +218,7 @@ function App(){
     var url=URL.createObjectURL(file); setImage(url);
     var img=new Image(); img.onload=function(){setImgEl(img);}; img.src=url;
   },[]);
-  var toggleAnim=function(key){setSelectedAnims(function(prev){return prev.includes(key)?prev.filter(function(a){return a!==key}):prev.concat([key]);});};
+  var toggleAnim=function(key){setSelectedAnims([key]);};
 
   var fitImage=useCallback(function(img,targetSize){
     var scale=(targetSize*0.75)/Math.max(img.width,img.height);
@@ -325,7 +325,7 @@ function App(){
                 E("label",{className:"text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2 block"},"Preview"),
                 E("div",{className:"flex flex-col items-center gap-2"},
                   E(PreviewCanvas,null),
-                  E("div",{className:"flex gap-1 flex-wrap"},selectedAnims.map(function(a){return E("button",{key:a,onClick:function(){setPreviewAnim(a)},className:"px-2 py-1 rounded text-xs transition-all "+(previewAnim===a?"bg-violet-600 text-white":"bg-zinc-800 text-zinc-400")},ANIMATIONS[a].label);})),
+                  
                   E("button",{onClick:function(){setPlaying(!playing)},className:"text-xs text-zinc-500 hover:text-zinc-300"},playing?"\u23F8 Pause":"\u25B6 Play"))),
               E("div",{className:"flex-1 text-xs text-zinc-500 space-y-1 pt-6"},
                 E("p",null,E("span",{className:"text-zinc-400"},"Sheet: "),frameCount*(charSize+padding*2)+"\u00d7"+selectedAnims.length*(charSize+padding*2)+"px"),
