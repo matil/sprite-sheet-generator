@@ -284,7 +284,7 @@ function App(){
   var _cs=useState(128),charSize=_cs[0],setCharSize=_cs[1];
   var _sh=useState(true),addShadow=_sh[0],setAddShadow=_sh[1];
   var _pd=useState(0),padding=_pd[0],setPadding=_pd[1];
-  var _bg=useState(true),bgTransparent=_bg[0],setBgTransparent=_bg[1];
+  
   var _ss=useState(null),spriteSheet=_ss[0],setSpriteSheet=_ss[1];
   var _pa=useState(null),previewAnim=_pa[0],setPreviewAnim=_pa[1];
   var _pf=useState(0),previewFrame=_pf[0],setPreviewFrame=_pf[1];
@@ -340,7 +340,7 @@ function App(){
         var canvas=document.createElement("canvas");
         canvas.width=frameCount*cellSize; canvas.height=selectedAnims.length*cellSize;
         var ctx=canvas.getContext("2d"); ctx.imageSmoothingEnabled=charSize>64;
-        if(!bgTransparent){ctx.fillStyle="#1a1a2e";ctx.fillRect(0,0,canvas.width,canvas.height);}
+        
         selectedAnims.forEach(function(animKey,row){
           var anim=ANIMATIONS[animKey]; if(!anim)return;
           for(var f=0;f<frameCount;f++){
@@ -360,7 +360,7 @@ function App(){
       }catch(e){console.error("Gen error:",e);}
     };
     if(fitted.complete) doGen(); else fitted.onload=doGen;
-  },[imgEl,selectedAnims,frameCount,charSize,addShadow,padding,bgTransparent,fitImage]);
+  },[imgEl,selectedAnims,frameCount,charSize,addShadow,padding,fitImage]);
 
   useEffect(function(){
     if(!spriteSheet||!previewAnim||!playing)return;
@@ -408,7 +408,7 @@ function App(){
             E("div",{className:"flex flex-wrap gap-2"},FRAME_OPTIONS.map(function(f){return btn(frameCount===f,function(){setFrameCount(f)},String(f));})),
             E("p",{className:"text-xs text-zinc-600 mt-2 font-mono"},"Cycle: "+pingPong)),
           E("div",null,E("label",{className:"text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2 block"},"Options"),
-            E("div",{className:"space-y-2"},chk("Drop Shadow",addShadow,setAddShadow),chk("Transparent BG",bgTransparent,setBgTransparent),
+            E("div",{className:"space-y-2"},chk("Drop Shadow",addShadow,setAddShadow),
               E("label",{key:"rmbg",className:"flex items-center gap-3 p-2.5 rounded-lg bg-zinc-900/50 border border-zinc-800 cursor-pointer hover:border-zinc-700 transition-all"},
                 E("div",{className:"w-5 h-5 rounded flex items-center justify-center transition-all "+(removeBg?"bg-violet-600":"bg-zinc-700"),onClick:function(e){e.preventDefault();setRemoveBg(!removeBg);}},removeBg&&E("span",{className:"text-white text-xs"},"\u2713")),
                 E("span",{className:"text-sm text-zinc-300"},removing?"Removing BG...":"Remove Background")),
