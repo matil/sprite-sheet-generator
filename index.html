@@ -161,7 +161,7 @@ var ANIMATIONS = {
       rightLeg:{rot:recoil*0.15},
       bx:-recoil*sz*0.04+shake
     });
-    if(t<0.2){var a=(1-t/0.2); ctx.save();ctx.globalAlpha=a*0.4;ctx.fillStyle='#fff';ctx.fillRect(0,0,sz,sz);ctx.restore(); drawSpark(ctx,(sz-img.width)/2+img.width*0.3,(sz-img.height)/2+img.height*0.25,sz*0.09,0.8*a);}
+    if(t<0.2){var a=(1-t/0.2); ctx.save();ctx.globalAlpha=a*0.5;ctx.globalCompositeOperation='source-atop';ctx.fillStyle='#fff';ctx.fillRect(0,0,sz,sz);ctx.restore(); drawSpark(ctx,(sz-img.width)/2+img.width*0.3,(sz-img.height)/2+img.height*0.25,sz*0.09,0.8*a);}
   }},
   spin: { label:"Spin", desc:"360 rotation", generate: function(ctx,img,f,tot,sz) {
     var t=(f/tot)*Math.PI*2;
