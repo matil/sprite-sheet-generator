@@ -72,118 +72,276 @@ function drawShadow(ctx,size){ctx.save();ctx.beginPath();ctx.ellipse(size/2,size
 function drawSpark(ctx,x,y,r,a){ctx.save();ctx.globalAlpha=a;ctx.strokeStyle='#fff';ctx.lineWidth=2;for(var i=0;i<6;i++){var an=(i/6)*Math.PI*2;ctx.beginPath();ctx.moveTo(x+Math.cos(an)*r*0.25,y+Math.sin(an)*r*0.25);ctx.lineTo(x+Math.cos(an)*r,y+Math.sin(an)*r);ctx.stroke();}ctx.restore();}
 
 var ANIMATIONS = {
-  idle: { label:"Idle", desc:"Breathing & gentle sway", generate: function(ctx,img,f,tot,sz) {
+  idle: { label:"Idle", desc:"Breathing & weight shift", generate: function(ctx,img,f,tot,sz) {
     var t=(f/tot)*Math.PI*2;
+    // Slow breathing cycle with subtle weight shift
+    var breathe=Math.sin(t);
+    var shift=Math.sin(t*0.5);
     drawChar(ctx,img,sz,{
-      head:{rot:Math.sin(t*0.5)*0.03, oy:Math.sin(t)*-1},
-      torso:{rot:Math.sin(t*0.5)*0.02},
-      leftArm:{rot:Math.sin(t)*0.08},
-      rightArm:{rot:-Math.sin(t+0.5)*0.08},
-      leftLeg:{rot:Math.sin(t*0.5)*0.02},
-      rightLeg:{rot:-Math.sin(t*0.5)*0.02},
-      by:Math.sin(t)*-1.5
+      head:{rot:shift*0.02, oy:breathe*-1.5},
+      torso:{rot:shift*0.015, oy:breathe*-1},
+      leftArm:{rot:0.05+breathe*0.04+shift*0.03},
+      rightArm:{rot:-0.05-breathe*0.04-shift*0.03},
+      leftLeg:{rot:shift*0.03},
+      rightLeg:{rot:-shift*0.03},
+      by:breathe*-1
     });
   }},
-  run: { label:"Run", desc:"Full sprint with pumping limbs", generate: function(ctx,img,f,tot,sz) {
+  run: { label:"Run", desc:"Full sprint cycle", generate: function(ctx,img,f,tot,sz) {
     var t=(f/tot)*Math.PI*2;
-    var bounce=Math.abs(Math.sin(t))*-sz*0.035;
+    // Run has 4 key poses: contact, down, passing, up
+    // Bounce: high during flight, low at contact
+    var contactPhase=Math.cos(t*2); // double-bounce per stride
+    var bounce=(-Math.abs(Math.sin(t))*0.04 + (contactPhase>0.5?-0.015:0))*sz;
+    // Forward lean is constant in a run
+    var forwardLean=0.08;
+    // Leg swing: front/back with asymmetric timing (faster forward snap)
+    var legPhase=Math.sin(t);
+    var legForward=legPhase>0?Math.pow(legPhase,0.7):-(Math.pow(-legPhase,0.7));
+    // Arms oppose legs, elbows bent so less amplitude than legs
     drawChar(ctx,img,sz,{
-      head:{rot:Math.sin(t*2)*0.05, oy:bounce*0.3},
-      torso:{rot:Math.sin(t)*0.1},
-      leftArm:{rot:Math.sin(t+Math.PI)*0.75},
-      rightArm:{rot:Math.sin(t)*0.75},
-      leftLeg:{rot:Math.sin(t)*0.7},
-      rightLeg:{rot:Math.sin(t+Math.PI)*0.7},
+      head:{rot:forwardLean*0.3+Math.sin(t*2)*0.02, oy:bounce*0.4},
+      torso:{rot:forwardLean+Math.sin(t)*0.06, oy:bounce*0.3},
+      leftArm:{rot:-legForward*0.85+forwardLean*0.5},
+      rightArm:{rot:legForward*0.85+forwardLean*0.5},
+      leftLeg:{rot:legForward*0.8},
+      rightLeg:{rot:-legForward*0.8},
       by:bounce
     });
-    if(Math.abs(Math.sin(t))>0.88) drawDust(ctx,sz/2+Math.sin(t)*8,(sz+img.height)/2+bounce,4,sz*0.06,0.3,sz*0.009);
+    // Dust on foot strike
+    var strike=Math.abs(Math.sin(t));
+    if(strike>0.92) drawDust(ctx,sz/2+Math.sin(t)*6,(sz+img.height)/2+bounce,5,sz*0.06,0.35,sz*0.01);
   }},
-  walk: { label:"Walk", desc:"Casual stride with arm swing", generate: function(ctx,img,f,tot,sz) {
+  walk: { label:"Walk", desc:"Natural walking gait", generate: function(ctx,img,f,tot,sz) {
     var t=(f/tot)*Math.PI*2;
-    var bounce=Math.abs(Math.sin(t))*-sz*0.012;
+    // Walk: one foot always on ground. Bounce peaks at midstance (leg straight under body)
+    var bounce=Math.sin(t*2+Math.PI/2)*sz*0.012;
+    // Hip sway: lateral weight shift over planted foot
+    var hipSway=Math.sin(t)*sz*0.008;
+    // Legs: moderate swing, front foot reaches, back foot pushes
+    var legSwing=Math.sin(t);
+    // Counter-rotation: shoulders twist opposite to hips
+    var twist=Math.sin(t)*0.04;
     drawChar(ctx,img,sz,{
-      head:{rot:Math.sin(t)*0.03},
-      torso:{rot:Math.sin(t)*0.05, ox:Math.sin(t)*sz*0.006},
-      leftArm:{rot:Math.sin(t+Math.PI)*0.45},
-      rightArm:{rot:Math.sin(t)*0.45},
-      leftLeg:{rot:Math.sin(t)*0.4},
-      rightLeg:{rot:Math.sin(t+Math.PI)*0.4},
+      head:{rot:-twist*0.3, ox:-hipSway*0.3},
+      torso:{rot:twist, ox:hipSway},
+      leftArm:{rot:-legSwing*0.35-0.05},
+      rightArm:{rot:legSwing*0.35+0.05},
+      leftLeg:{rot:legSwing*0.45},
+      rightLeg:{rot:-legSwing*0.45},
       by:bounce
     });
   }},
-  jump: { label:"Jump", desc:"Crouch, launch, tuck, land", generate: function(ctx,img,f,tot,sz) {
+  jump: { label:"Jump", desc:"Squat, launch, peak, land", generate: function(ctx,img,f,tot,sz) {
     var t=f/Math.max(tot-1,1);
-    var arc=-Math.sin(t*Math.PI)*sz*0.22;
+    // Smooth parabolic arc
+    var arc=-Math.sin(t*Math.PI)*sz*0.24;
     var p={head:{},torso:{},leftArm:{},rightArm:{},leftLeg:{},rightLeg:{},by:arc};
-    if(t<0.15){var q=t/0.15; p.leftLeg={rot:q*0.3}; p.rightLeg={rot:-q*0.3}; p.torso={oy:q*sz*0.02}; p.leftArm={rot:-q*0.2}; p.rightArm={rot:q*0.2};}
-    else if(t<0.35){var q=(t-0.15)/0.2; p.leftArm={rot:-0.8*q}; p.rightArm={rot:0.8*q}; p.leftLeg={rot:-0.3*q}; p.rightLeg={rot:0.3*q}; p.torso={oy:-q*sz*0.01};}
-    else if(t<0.65){var q=Math.sin(((t-0.35)/0.3)*Math.PI); p.leftLeg={rot:0.6*q}; p.rightLeg={rot:0.6*q}; p.leftArm={rot:-0.6-0.3*q}; p.rightArm={rot:0.6+0.3*q};}
-    else if(t<0.85){var q=(t-0.65)/0.2; p.leftLeg={rot:0.4*(1-q)}; p.rightLeg={rot:-0.2*q}; p.leftArm={rot:-0.4*(1-q)}; p.rightArm={rot:0.4*(1-q)};}
-    else{var q=(t-0.85)/0.15; p.leftLeg={rot:q*0.25}; p.rightLeg={rot:-q*0.25}; p.torso={oy:q*sz*0.02}; p.leftArm={rot:q*0.3}; p.rightArm={rot:-q*0.3};}
+    if(t<0.18) {
+      // Anticipation: deep squat, arms swing back, lean forward
+      var q=t/0.18;
+      var ease=q*q; // accelerating into squat
+      p.torso={rot:ease*0.08, oy:ease*sz*0.03};
+      p.leftLeg={rot:ease*0.35};
+      p.rightLeg={rot:-ease*0.35};
+      p.leftArm={rot:ease*0.5}; // arms back
+      p.rightArm={rot:-ease*0.5};
+      p.head={rot:-ease*0.04};
+    } else if(t<0.35) {
+      // Launch: explosive extension, arms drive up
+      var q=(t-0.18)/0.17;
+      var ease=1-Math.pow(1-q,2); // decelerating extension
+      p.torso={rot:0.08*(1-ease)-ease*0.05, oy:0.03*sz*(1-ease)};
+      p.leftLeg={rot:0.35*(1-ease)-ease*0.2};
+      p.rightLeg={rot:-0.35*(1-ease)+ease*0.2};
+      p.leftArm={rot:0.5-ease*1.3}; // arms drive up
+      p.rightArm={rot:-0.5+ease*1.3};
+      p.head={rot:-0.04+ease*0.06};
+    } else if(t<0.65) {
+      // Air: arms up, legs tuck
+      var q=((t-0.35)/0.3);
+      var tuck=Math.sin(q*Math.PI);
+      p.leftArm={rot:-0.8-tuck*0.2};
+      p.rightArm={rot:0.8+tuck*0.2};
+      p.leftLeg={rot:tuck*0.5};
+      p.rightLeg={rot:tuck*0.5};
+      p.torso={rot:-0.05};
+      p.head={rot:0.02};
+    } else if(t<0.82) {
+      // Descend: extend legs, arms come down
+      var q=(t-0.65)/0.17;
+      p.leftLeg={rot:-q*0.2};
+      p.rightLeg={rot:q*0.2};
+      p.leftArm={rot:-0.8+q*0.5};
+      p.rightArm={rot:0.8-q*0.5};
+      p.head={rot:q*0.04};
+    } else {
+      // Land: absorb with deep squat
+      var q=(t-0.82)/0.18;
+      var impact=Math.sin(q*Math.PI*0.5);
+      p.torso={rot:impact*0.1, oy:impact*sz*0.03};
+      p.leftLeg={rot:impact*0.4};
+      p.rightLeg={rot:-impact*0.4};
+      p.leftArm={rot:impact*0.3};
+      p.rightArm={rot:-impact*0.3};
+      p.head={rot:-impact*0.05};
+    }
     drawChar(ctx,img,sz,p);
-    if(t>0.87) drawDust(ctx,sz/2,(sz+img.height)/2+arc, 5+Math.floor((t-0.87)/0.13*6), sz*0.1*((t-0.87)/0.13), 0.35, sz*0.012);
+    if(t>0.85){var q=(t-0.85)/0.15; drawDust(ctx,sz/2,(sz+img.height)/2+arc,4+Math.floor(q*6),sz*0.1*q,0.35*q,sz*0.012);}
   }},
-  attack: { label:"Attack", desc:"Wind-up strike with impact", generate: function(ctx,img,f,tot,sz) {
+  attack: { label:"Attack", desc:"Slash with full body", generate: function(ctx,img,f,tot,sz) {
     var t=f/Math.max(tot-1,1);
     var p={head:{},torso:{},leftArm:{},rightArm:{},leftLeg:{},rightLeg:{}};
-    if(t<0.25){var q=t/0.25; p.torso={rot:-q*0.12}; p.rightArm={rot:-q*1.2}; p.leftArm={rot:q*0.3}; p.rightLeg={rot:-q*0.15}; p.head={rot:-q*0.05};}
-    else if(t<0.45){var q=(t-0.25)/0.2; p.torso={rot:-0.12+q*0.3}; p.rightArm={rot:-1.2+q*2.4}; p.leftArm={rot:0.3-q*0.5}; p.rightLeg={rot:-0.15+q*0.25}; p.head={rot:-0.05+q*0.12};}
-    else if(t<0.6){var q=(t-0.45)/0.15; var sh=Math.sin(q*Math.PI*5)*0.03; p.torso={rot:0.18+sh}; p.rightArm={rot:1.2+sh}; p.leftArm={rot:-0.2}; p.head={rot:0.07+sh};}
-    else{var q=(t-0.6)/0.4; var e=1-q*q; p.torso={rot:0.18*e}; p.rightArm={rot:1.2*e}; p.leftArm={rot:-0.2*e}; p.head={rot:0.07*e};}
+    if(t<0.3) {
+      // Wind-up: coil back, shift weight to back foot
+      var q=t/0.3;
+      var ease=1-Math.pow(1-q,2);
+      p.torso={rot:-ease*0.18, ox:-ease*sz*0.02};
+      p.rightArm={rot:-ease*1.5}; // arm cocked way back
+      p.leftArm={rot:ease*0.4}; // guard arm forward
+      p.rightLeg={rot:-ease*0.2}; // weight back
+      p.leftLeg={rot:ease*0.15};
+      p.head={rot:-ease*0.08};
+    } else if(t<0.45) {
+      // Strike: explosive forward rotation
+      var q=(t-0.3)/0.15;
+      var ease=q*q*q; // sharp acceleration
+      p.torso={rot:-0.18+ease*0.42, ox:-0.02*sz+ease*sz*0.06};
+      p.rightArm={rot:-1.5+ease*3.0}; // huge swing
+      p.leftArm={rot:0.4-ease*0.6};
+      p.rightLeg={rot:-0.2+ease*0.35};
+      p.leftLeg={rot:0.15-ease*0.1};
+      p.head={rot:-0.08+ease*0.18};
+    } else if(t<0.55) {
+      // Follow-through: overextend
+      var q=(t-0.45)/0.1;
+      p.torso={rot:0.24+q*0.04, ox:sz*0.04};
+      p.rightArm={rot:1.5+q*0.2}; // past peak
+      p.leftArm={rot:-0.2-q*0.1};
+      p.rightLeg={rot:0.15};
+      p.leftLeg={rot:0.05};
+      p.head={rot:0.1+q*0.02};
+      // Impact shake
+      var sh=Math.sin(q*Math.PI*6)*0.02;
+      p.torso.rot+=sh; p.head.rot+=sh;
+    } else {
+      // Recovery: settle back
+      var q=(t-0.55)/0.45;
+      var ease=1-Math.pow(1-q,3);
+      p.torso={rot:0.28*(1-ease)};
+      p.rightArm={rot:1.7*(1-ease)};
+      p.leftArm={rot:-0.3*(1-ease)};
+      p.rightLeg={rot:0.15*(1-ease)};
+      p.leftLeg={rot:0.05*(1-ease)};
+      p.head={rot:0.12*(1-ease)};
+    }
     drawChar(ctx,img,sz,p);
-    if(t>0.4&&t<0.6){var q=1-(t-0.4)/0.2; drawSpark(ctx,(sz+img.width)/2+sz*0.08,(sz-img.height)/2+img.height*0.3,sz*0.1*q,0.8*q);}
+    if(t>0.42&&t<0.6){var q=1-Math.abs(t-0.48)/0.12; if(q>0) drawSpark(ctx,(sz+img.width)/2+sz*0.06,(sz-img.height)/2+img.height*0.28,sz*0.12*q,0.9*q);}
   }},
-  death: { label:"Death", desc:"Collapse and fade", generate: function(ctx,img,f,tot,sz) {
+  death: { label:"Death", desc:"Collapse to ground", generate: function(ctx,img,f,tot,sz) {
     var t=f/Math.max(tot-1,1);
-    var fall=t*t;
-    drawChar(ctx,img,sz,{
-      head:{rot:fall*0.8, ox:fall*sz*0.08},
-      torso:{rot:fall*0.6, ox:fall*sz*0.06},
-      leftArm:{rot:fall*1.2+Math.sin(t*8)*0.1},
-      rightArm:{rot:-fall*0.5},
-      leftLeg:{rot:fall*0.4},
-      rightLeg:{rot:-fall*0.3},
-      by:fall*sz*0.08,
-      alpha:1-t*0.7
-    });
-    if(t>0.3) drawDust(ctx,sz/2+fall*sz*0.1,(sz+img.height)/2+fall*sz*0.08,3+Math.floor(t*6),sz*0.08*t,0.25,sz*0.01);
+    // Phase 1: initial hit reaction (0-0.15)
+    // Phase 2: knees buckle (0.15-0.4)
+    // Phase 3: upper body follows, fall sideways (0.4-0.8)
+    // Phase 4: settle on ground (0.8-1)
+    var p={head:{},torso:{},leftArm:{},rightArm:{},leftLeg:{},rightLeg:{},by:0,alpha:1};
+    if(t<0.15) {
+      var q=t/0.15;
+      p.head={rot:-q*0.1};
+      p.torso={rot:-q*0.06};
+      p.leftArm={rot:q*0.3};
+      p.rightArm={rot:-q*0.4};
+    } else if(t<0.4) {
+      var q=(t-0.15)/0.25;
+      var ease=q*q;
+      p.leftLeg={rot:ease*0.6};
+      p.rightLeg={rot:-ease*0.5};
+      p.torso={rot:-0.06+ease*0.15};
+      p.head={rot:-0.1+ease*0.05};
+      p.leftArm={rot:0.3+ease*0.4};
+      p.rightArm={rot:-0.4-ease*0.2};
+      p.by=ease*sz*0.04;
+    } else if(t<0.8) {
+      var q=(t-0.4)/0.4;
+      var ease=1-Math.pow(1-q,2);
+      p.torso={rot:0.09+ease*0.7, ox:ease*sz*0.1};
+      p.head={rot:-0.05+ease*0.9, ox:ease*sz*0.12};
+      p.leftLeg={rot:0.6+ease*0.3};
+      p.rightLeg={rot:-0.5+ease*0.2};
+      p.leftArm={rot:0.7+ease*0.8+Math.sin(q*6)*0.08};
+      p.rightArm={rot:-0.6-ease*0.3};
+      p.by=sz*0.04+ease*sz*0.08;
+      p.alpha=1-ease*0.3;
+    } else {
+      var q=(t-0.8)/0.2;
+      p.torso={rot:0.79+q*0.05, ox:sz*0.1};
+      p.head={rot:0.85+q*0.03, ox:sz*0.12};
+      p.leftLeg={rot:0.9};
+      p.rightLeg={rot:-0.3};
+      p.leftArm={rot:1.5};
+      p.rightArm={rot:-0.9};
+      p.by=sz*0.12;
+      p.alpha=0.7-q*0.35;
+    }
+    drawChar(ctx,img,sz,p);
+    if(t>0.35) drawDust(ctx,sz/2+(t-0.35)*sz*0.15,(sz+img.height)/2+p.by,3+Math.floor(t*5),sz*0.07*t,0.2,sz*0.01);
   }},
-  hit: { label:"Hit/Hurt", desc:"Knockback recoil", generate: function(ctx,img,f,tot,sz) {
+  hit: { label:"Hit/Hurt", desc:"Impact & stagger", generate: function(ctx,img,f,tot,sz) {
     var t=f/Math.max(tot-1,1);
-    var recoil=Math.sin(t*Math.PI);
-    var shake=Math.sin(t*Math.PI*7)*sz*0.025*(1-t);
-    drawChar(ctx,img,sz,{
-      head:{rot:-recoil*0.15, ox:-recoil*sz*0.03+shake},
-      torso:{rot:-recoil*0.1, ox:-recoil*sz*0.02+shake},
-      leftArm:{rot:recoil*0.5+Math.sin(t*10)*0.1*(1-t)},
-      rightArm:{rot:-recoil*0.6},
-      leftLeg:{rot:-recoil*0.15},
-      rightLeg:{rot:recoil*0.15},
-      bx:-recoil*sz*0.04+shake
-    });
-    if(t<0.2){var a=(1-t/0.2); ctx.save();ctx.globalAlpha=a*0.5;ctx.globalCompositeOperation='source-atop';ctx.fillStyle='#fff';ctx.fillRect(0,0,sz,sz);ctx.restore(); drawSpark(ctx,(sz-img.width)/2+img.width*0.3,(sz-img.height)/2+img.height*0.25,sz*0.09,0.8*a);}
+    var p={head:{},torso:{},leftArm:{},rightArm:{},leftLeg:{},rightLeg:{},bx:0};
+    if(t<0.12) {
+      // Initial impact: sharp backward snap
+      var q=t/0.12;
+      var snap=q*q;
+      p.head={rot:-snap*0.25, ox:-snap*sz*0.04};
+      p.torso={rot:-snap*0.15, ox:-snap*sz*0.03};
+      p.leftArm={rot:snap*0.7};
+      p.rightArm={rot:-snap*0.8};
+      p.leftLeg={rot:-snap*0.12};
+      p.rightLeg={rot:snap*0.1};
+      p.bx=-snap*sz*0.05;
+    } else if(t<0.35) {
+      // Hold recoil + shake
+      var q=(t-0.12)/0.23;
+      var shake=Math.sin(q*Math.PI*5)*sz*0.02*(1-q);
+      p.head={rot:-0.25+q*0.1, ox:-sz*0.04+q*sz*0.015+shake};
+      p.torso={rot:-0.15+q*0.06, ox:-sz*0.03+q*sz*0.01+shake*0.7};
+      p.leftArm={rot:0.7-q*0.2};
+      p.rightArm={rot:-0.8+q*0.25};
+      p.leftLeg={rot:-0.12+q*0.05};
+      p.rightLeg={rot:0.1-q*0.04};
+      p.bx=-sz*0.05+q*sz*0.02+shake;
+    } else {
+      // Recovery: return to neutral with slight overshoot
+      var q=(t-0.35)/0.65;
+      var ease=1-Math.pow(1-q,2);
+      var overshoot=Math.sin(q*Math.PI)*0.04;
+      p.head={rot:(-0.15+overshoot)*(1-ease)};
+      p.torso={rot:(-0.09+overshoot)*(1-ease)};
+      p.leftArm={rot:0.5*(1-ease)};
+      p.rightArm={rot:-0.55*(1-ease)};
+      p.leftLeg={rot:-0.07*(1-ease)};
+      p.rightLeg={rot:0.06*(1-ease)};
+      p.bx=-sz*0.03*(1-ease);
+    }
+    drawChar(ctx,img,sz,p);
+    // Flash on character only
+    if(t<0.15){var a=(1-t/0.15); ctx.save();ctx.globalAlpha=a*0.55;ctx.globalCompositeOperation='source-atop';ctx.fillStyle='#fff';ctx.fillRect(0,0,sz,sz);ctx.restore(); drawSpark(ctx,(sz-img.width)/2+img.width*0.3,(sz-img.height)/2+img.height*0.2,sz*0.1,0.85*a);}
   }},
-  spin: { label:"Spin", desc:"360 rotation", generate: function(ctx,img,f,tot,sz) {
+  spin: { label:"Spin", desc:"Full 360 rotation", generate: function(ctx,img,f,tot,sz) {
     var t=(f/tot)*Math.PI*2;
     var scaleX=Math.cos(t);
     var iw=img.width, ih=img.height;
-    var dx=(sz-iw*Math.abs(scaleX))/2, dy=(sz-ih)/2;
+    var dy=(sz-ih)/2;
+    // Slight vertical bob during spin
+    var bob=Math.sin(t*2)*sz*0.01;
     ctx.save();
-    ctx.translate(sz/2,sz/2);
+    ctx.translate(sz/2,sz/2+bob);
     ctx.scale(scaleX>0?1:-1,1);
-    ctx.scale(Math.abs(scaleX),1);
+    ctx.scale(Math.abs(scaleX)*0.9+0.1,1);
     ctx.translate(-sz/2,-sz/2);
     ctx.drawImage(img, 0, 0, iw, ih, (sz-iw)/2, dy, iw, ih);
     ctx.restore();
-    // arm flail during spin
-    var bp=getParts(img,sz);
-    var armRot=Math.sin(t*2)*0.4;
-    if(Math.abs(scaleX)<0.7){
-      ctx.save();ctx.globalAlpha=0.5;
-      drawPart(ctx,img,bp.leftArm.r,bp.leftArm.px,bp.leftArm.py,armRot,0,0,1);
-      drawPart(ctx,img,bp.rightArm.r,bp.rightArm.px,bp.rightArm.py,-armRot,0,0,1);
-      ctx.restore();
-    }
   }}
 };
 
