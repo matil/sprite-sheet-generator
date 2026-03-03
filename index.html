@@ -395,13 +395,13 @@ var ANIMATIONS = {
   }},
   jump: { label:"Jump", desc:"Squat, launch, peak, land", linear:true, generate: function(ctx,img,f,tot,sz,bd,wpn) {
     var t=f/Math.max(tot-1,1);
-    var arc=-Math.sin(t*Math.PI)*sz*0.24;
+    var arc=-Math.sin(t*Math.PI)*sz*0.18;
     var p={head:{},torso:{},leftArm:{},rightArm:{},leftLeg:{},rightLeg:{},by:arc};
-    if(t<0.18){var q=t/0.18,e=q*q; p.torso={rot:e*0.08,oy:e*sz*0.03}; p.leftLeg={rot:e*0.35}; p.rightLeg={rot:-e*0.35}; p.leftArm={rot:e*0.5}; p.rightArm={rot:-e*0.5}; p.head={rot:-e*0.04};}
-    else if(t<0.35){var q=(t-0.18)/0.17,e=1-Math.pow(1-q,2); p.torso={rot:0.08*(1-e)-e*0.05,oy:0.03*sz*(1-e)}; p.leftLeg={rot:0.35*(1-e)-e*0.2}; p.rightLeg={rot:-0.35*(1-e)+e*0.2}; p.leftArm={rot:0.5-e*1.3}; p.rightArm={rot:-0.5+e*1.3}; p.head={rot:-0.04+e*0.06};}
-    else if(t<0.65){var q=(t-0.35)/0.3,tk=Math.sin(q*Math.PI); p.leftArm={rot:-0.8-tk*0.2}; p.rightArm={rot:0.8+tk*0.2}; p.leftLeg={rot:tk*0.5}; p.rightLeg={rot:tk*0.5}; p.torso={rot:-0.05}; p.head={rot:0.02};}
-    else if(t<0.82){var q=(t-0.65)/0.17; p.leftLeg={rot:-q*0.2}; p.rightLeg={rot:q*0.2}; p.leftArm={rot:-0.8+q*0.5}; p.rightArm={rot:0.8-q*0.5}; p.head={rot:q*0.04};}
-    else{var q=(t-0.82)/0.18,imp=Math.sin(q*Math.PI*0.5); p.torso={rot:imp*0.1,oy:imp*sz*0.03}; p.leftLeg={rot:imp*0.4}; p.rightLeg={rot:-imp*0.4}; p.leftArm={rot:imp*0.3}; p.rightArm={rot:-imp*0.3}; p.head={rot:-imp*0.05};}
+    if(t<0.15){var q=t/0.15,e=q*q; p.torso={rot:e*0.05,oy:e*sz*0.02}; p.leftLeg={rot:e*0.15}; p.rightLeg={rot:-e*0.15}; p.leftArm={rot:e*0.2}; p.rightArm={rot:-e*0.2}; p.head={rot:-e*0.03};}
+    else if(t<0.35){var q=(t-0.15)/0.2,e=1-Math.pow(1-q,2); p.torso={rot:0.05*(1-e)-e*0.03,oy:0.02*sz*(1-e)}; p.leftLeg={rot:0.15*(1-e)-e*0.1}; p.rightLeg={rot:-0.15*(1-e)+e*0.1}; p.leftArm={rot:0.2-e*0.6}; p.rightArm={rot:-0.2+e*0.6}; p.head={rot:-0.03+e*0.04};}
+    else if(t<0.65){var q=(t-0.35)/0.3,tk=Math.sin(q*Math.PI); p.leftArm={rot:-0.4-tk*0.1}; p.rightArm={rot:0.4+tk*0.1}; p.leftLeg={rot:tk*0.12}; p.rightLeg={rot:tk*0.12}; p.torso={rot:-0.03}; p.head={rot:0.01};}
+    else if(t<0.82){var q=(t-0.65)/0.17; p.leftLeg={rot:-q*0.1}; p.rightLeg={rot:q*0.1}; p.leftArm={rot:-0.4+q*0.25}; p.rightArm={rot:0.4-q*0.25}; p.head={rot:q*0.02};}
+    else{var q=(t-0.82)/0.18,imp=Math.sin(q*Math.PI*0.5); p.torso={rot:imp*0.06,oy:imp*sz*0.02}; p.leftLeg={rot:imp*0.15}; p.rightLeg={rot:-imp*0.15}; p.leftArm={rot:imp*0.15}; p.rightArm={rot:-imp*0.15}; p.head={rot:-imp*0.03};}
     if(bd) drawAnimChar(ctx,bd,sz,p); else drawCharFallback(ctx,img,sz,p);
     if(wpn&&wpn.showAll) drawWeapon(ctx,wpn,bd,sz,p,"back");
     if(t>0.85){var q2=(t-0.85)/0.15; drawDust(ctx,sz/2,sz*0.88+arc,4+Math.floor(q2*6),sz*0.1*q2,0.35*q2,sz*0.012);}
@@ -431,14 +431,23 @@ var ANIMATIONS = {
   }},
   death: { label:"Death", desc:"Fall backward", linear:true, generate: function(ctx,img,f,tot,sz,bd,wpn) {
     var t=f/Math.max(tot-1,1);
-    var p={head:{},torso:{},leftArm:{},rightArm:{},leftLeg:{},rightLeg:{},by:0,alpha:1};
-    if(t<0.12){var q=t/0.12; p.head={rot:q*0.12}; p.torso={rot:q*0.06}; p.leftArm={rot:-q*0.2}; p.rightArm={rot:q*0.15};}
-    else if(t<0.35){var q=(t-0.12)/0.23,e=q*q; p.torso={rot:0.06+e*0.12,ox:-e*sz*0.03}; p.head={rot:0.12+e*0.15,ox:-e*sz*0.04}; p.leftLeg={rot:-e*0.4}; p.rightLeg={rot:e*0.35}; p.leftArm={rot:-0.2-e*0.5}; p.rightArm={rot:0.15+e*0.4}; p.by=e*sz*0.03;}
-    else if(t<0.75){var q=(t-0.35)/0.4,e=1-Math.pow(1-q,2); p.torso={rot:-(0.18+e*0.8),ox:-(sz*0.03+e*sz*0.08)}; p.head={rot:-(0.27+e*0.9),ox:-(sz*0.04+e*sz*0.1)}; p.leftLeg={rot:-0.4+e*0.7}; p.rightLeg={rot:0.35-e*0.5}; p.leftArm={rot:-0.7-e*0.6-Math.sin(q*5)*0.06}; p.rightArm={rot:0.55+e*0.5}; p.by=sz*0.03+e*sz*0.1; p.alpha=1-e*0.25;}
-    else{var q=(t-0.75)/0.25; p.torso={rot:-(0.98+q*0.04),ox:-sz*0.11}; p.head={rot:-(1.17+q*0.03),ox:-sz*0.14}; p.leftLeg={rot:0.3+q*0.05}; p.rightLeg={rot:-0.15}; p.leftArm={rot:-1.3}; p.rightArm={rot:1.05}; p.by=sz*0.13; p.alpha=0.75-q*0.4;}
-    if(bd) drawAnimChar(ctx,bd,sz,p); else drawCharFallback(ctx,img,sz,p);
-    if(wpn&&wpn.showAll) drawWeapon(ctx,wpn,bd,sz,p,"back");
-    if(t>0.3) drawDust(ctx,sz/2-(t-0.3)*sz*0.12,sz*0.88+p.by,3+Math.floor(t*5),sz*0.07*t,0.2,sz*0.01);
+    var iw=bd?bd.width:img.width, ih=bd?bd.height:img.height;
+    var footY=sz*0.88, charCx=sz/2;
+    var rot=0, al=1;
+    if(t<0.1){rot=t/0.1*0.03;}
+    else if(t<0.3){var q=(t-0.1)/0.2; rot=0.03+q*q*0.15;}
+    else if(t<0.7){var q=(t-0.3)/0.4,e=1-Math.pow(1-q,2); rot=0.18+e*1.2; al=1-e*0.15;}
+    else{var q=(t-0.7)/0.3; rot=1.38+q*0.19; al=0.85-q*0.5;}
+    ctx.save();
+    ctx.translate(charCx, footY);
+    ctx.rotate(-rot);
+    ctx.translate(-charCx, -footY);
+    if(al<1) ctx.globalAlpha=al;
+    if(bd){var p={head:{},torso:{},leftArm:{},rightArm:{},leftLeg:{},rightLeg:{}}; drawAnimChar(ctx,bd,sz,p);}
+    else{var ox2=(sz-iw)/2, oy2=(sz-ih)/2; ctx.drawImage(img,0,0,iw,ih,ox2,oy2,iw,ih);}
+    ctx.restore();
+    if(wpn&&wpn.showAll){var p2={torso:{rot:-rot},head:{},leftArm:{},rightArm:{},leftLeg:{},rightLeg:{}}; drawWeapon(ctx,wpn,bd,sz,p2,"back");}
+    if(t>0.3) drawDust(ctx,charCx-Math.sin(rot)*sz*0.3,footY,3+Math.floor(t*5),sz*0.07*t,0.2*(1-t*0.5),sz*0.01);
   }},
   hit: { label:"Hit/Hurt", desc:"Impact & stagger", generate: function(ctx,img,f,tot,sz,bd,wpn) {
     var t=f/Math.max(tot-1,1);
@@ -457,19 +466,6 @@ var ANIMATIONS = {
     var iw=img.width, ih=img.height;
     var dy=(sz-ih)/2;
     var bob=Math.sin(t*2)*sz*0.01;
-    var thickness=sz*0.06;
-    var edgeAlpha=1-absX;
-    if(edgeAlpha>0.15){
-      ctx.save();
-      ctx.globalAlpha=edgeAlpha*0.7;
-      var cx=sz/2,ey=dy+bob;
-      var sideOff=scaleX>0?-thickness*edgeAlpha:thickness*edgeAlpha;
-      ctx.fillStyle='#333';
-      ctx.beginPath();
-      ctx.ellipse(cx+sideOff,sz/2+bob,thickness*edgeAlpha,ih*0.45,0,0,Math.PI*2);
-      ctx.fill();
-      ctx.restore();
-    }
     ctx.save();
     ctx.translate(sz/2,sz/2+bob);
     ctx.scale(scaleX>0?1:-1,1);
