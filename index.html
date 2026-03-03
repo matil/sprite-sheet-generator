@@ -261,7 +261,7 @@ async function extractBodyParts(img) {
 // CLAUDE VISION API - analyzes character anatomy
 // Returns per-pixel body part assignment using Claude's understanding
 // ============================================================
-async function analyzeWithClaude(img) {
+async function analyzeWithClaude(img, apiKey) {
   var c = document.createElement("canvas");
   c.width = img.width; c.height = img.height;
   var ctx = c.getContext("2d");
@@ -269,9 +269,17 @@ async function analyzeWithClaude(img) {
   var dataUrl = c.toDataURL("image/png");
   var base64 = dataUrl.split(",")[1];
 
-  var response = await fetch("https://api.anthropic.com/v1/messages", {
+  var headers = {"Content-Type": "application/json"};
+  var url = "https://api.anthropic.com/v1/messages";
+  if (apiKey) {
+    headers["x-api-key"] = apiKey;
+    headers["anthropic-version"] = "2023-06-01";
+    headers["anthropic-dangerous-direct-browser-access"] = "true";
+  }
+
+  var response = await fetch(url, {
     method: "POST",
-    headers: {"Content-Type": "application/json"},
+    headers: headers,
     body: JSON.stringify({
       model: "claude-sonnet-4-20250514",
       max_tokens: 1000,
@@ -302,8 +310,8 @@ async function analyzeWithClaude(img) {
 }
 
 // Extract body parts using Claude's bounding boxes for pixel assignment
-async function extractWithClaude(img) {
-  var claudeBoxes = await analyzeWithClaude(img);
+async function extractWithClaude(img, apiKey) {
+  var claudeBoxes = await analyzeWithClaude(img, apiKey);
   var c = document.createElement("canvas");
   c.width = img.width; c.height = img.height;
   var ctx = c.getContext("2d");
@@ -619,6 +627,10 @@ function App(){
   var _bd=useState(null),bodyData=_bd[0],setBodyData=_bd[1];
   var _status=useState(""),aiStatus=_status[0],setAiStatus=_status[1];
   var _claude=useState(false),useClaude=_claude[0],setUseClaude=_claude[1];
+  var _apiKey=useState(""),apiKey=_apiKey[0],setApiKey=_apiKey[1];
+  var _retry=useState(0),retryCount=_retry[0],setRetryCount=_retry[1];
+  var apiKeyRef=useRef("");
+  useEffect(function(){apiKeyRef.current=apiKey;},[apiKey]);
   var fileInputRef=useRef(null);
 
   var handleUpload=useCallback(function(e){
@@ -656,7 +668,7 @@ function App(){
         var bd;
         if (useClaude) {
           setAiStatus("Analyzing with Claude Vision...");
-          bd = await extractWithClaude(imgEl);
+          bd = await extractWithClaude(imgEl, apiKeyRef.current);
         } else {
           setAiStatus("Loading BodyPix AI model...");
           bd = await extractBodyParts(imgEl);
@@ -685,12 +697,20 @@ function App(){
         } else { setBodyData(null); setAiStatus("Extraction failed"); }
       } catch(e) {
         console.error(e);
-        if (!cancelled) { setBodyData(null); setAiStatus("Error: "+e.message); }
+        if (!cancelled) {
+          setBodyData(null);
+          var msg = e.message || "Unknown error";
+          if (useClaude && (msg.includes("401") || msg.includes("403") || msg.includes("Failed to fetch"))) {
+            setAiStatus("Claude API error - paste API key or use inside claude.ai");
+          } else {
+            setAiStatus("Error: "+msg);
+          }
+        }
       }
     }
     run();
     return function(){ cancelled = true; };
-  },[imgEl, useClaude]);
+  },[imgEl, useClaude, retryCount]);
 
   var fitImage=useCallback(function(img,ts){
     var sc=(ts*0.75)/Math.max(img.width,img.height);
@@ -778,7 +798,12 @@ function App(){
           E("div",null,E("label",{className:"text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2 block"},"Frame Size"),E("div",{className:"flex flex-wrap gap-2"},SIZES.map(function(s){return btn(charSize===s,function(){setCharSize(s)},s+"px");}))),
           E("div",null,E("label",{className:"text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2 block"},"Frames per Animation"),E("div",{className:"flex flex-wrap gap-2"},FRAME_OPTIONS.map(function(f){return btn(frameCount===f,function(){setFrameCount(f)},String(f));})),E("p",{className:"text-xs text-zinc-600 mt-2 font-mono"},"Cycle: "+pingPong)),
           E("div",null,E("label",{className:"text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2 block"},"Options"),E("div",{className:"space-y-2"},chk("Drop Shadow",addShadow,setAddShadow),
-            E("label",{key:"claude",className:"flex items-center gap-3 p-2.5 rounded-lg bg-zinc-900/50 border "+(useClaude?"border-amber-500/50":"border-zinc-800")+" cursor-pointer hover:border-zinc-700 transition-all"},E("div",{className:"w-5 h-5 rounded flex items-center justify-center transition-all "+(useClaude?"bg-amber-500":"bg-zinc-700"),onClick:function(e){e.preventDefault();setUseClaude(!useClaude);}},useClaude&&E("span",{className:"text-white text-xs"},"\u2713")),E("span",{className:"text-sm "+(useClaude?"text-amber-300":"text-zinc-300")},"Claude Vision AI"),E("span",{className:"text-xs text-zinc-600 ml-auto"},"claude.ai only")),
+            E("label",{key:"claude",className:"flex items-center gap-3 p-2.5 rounded-lg bg-zinc-900/50 border "+(useClaude?"border-amber-500/50":"border-zinc-800")+" cursor-pointer hover:border-zinc-700 transition-all"},E("div",{className:"w-5 h-5 rounded flex items-center justify-center transition-all "+(useClaude?"bg-amber-500":"bg-zinc-700"),onClick:function(e){e.preventDefault();setUseClaude(!useClaude);}},useClaude&&E("span",{className:"text-white text-xs"},"\u2713")),E("span",{className:"text-sm "+(useClaude?"text-amber-300":"text-zinc-300")},"Claude Vision AI")),
+            useClaude&&E("div",{className:"p-2.5 rounded-lg bg-zinc-900/50 border border-amber-500/30 space-y-2"},
+              E("p",{className:"text-xs text-zinc-400"},"Works automatically inside claude.ai artifacts. For external use, paste your API key:"),
+              E("input",{type:"password",placeholder:"sk-ant-... (optional)",value:apiKey,onChange:function(e){setApiKey(e.target.value)},onClick:function(e){e.stopPropagation()},className:"w-full px-3 py-1.5 rounded bg-zinc-800 border border-zinc-700 text-xs text-zinc-300 placeholder-zinc-600 focus:border-amber-500/50 focus:outline-none"}),
+              E("p",{className:"text-xs text-zinc-600"},"Key stays in memory only. Never stored."),
+              E("button",{onClick:function(e){e.stopPropagation();setRetryCount(function(c){return c+1});},className:"px-3 py-1 rounded bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold transition-all"},"Retry Analysis")),
             E("label",{key:"rmbg",className:"flex items-center gap-3 p-2.5 rounded-lg bg-zinc-900/50 border border-zinc-800 cursor-pointer hover:border-zinc-700 transition-all"},E("div",{className:"w-5 h-5 rounded flex items-center justify-center transition-all "+(removeBg?"bg-violet-600":"bg-zinc-700"),onClick:function(e){e.preventDefault();setRemoveBg(!removeBg);}},removeBg&&E("span",{className:"text-white text-xs"},"\u2713")),E("span",{className:"text-sm text-zinc-300"},removing?"Removing BG...":"Remove Background")),
             removeBg&&E("div",{className:"flex items-center gap-3 p-2.5 rounded-lg bg-zinc-900/50 border border-zinc-800"},E("span",{className:"text-sm text-zinc-300"},"Tolerance"),E("input",{type:"range",min:5,max:80,value:bgTolerance,onChange:function(e){setBgTolerance(+e.target.value)},className:"flex-1 accent-violet-500"}),E("span",{className:"text-xs font-mono text-zinc-500 w-8 text-right"},bgTolerance)),
             E("div",{className:"flex items-center gap-3 p-2.5 rounded-lg bg-zinc-900/50 border border-zinc-800"},E("span",{className:"text-sm text-zinc-300"},"Padding"),E("input",{type:"range",min:0,max:16,value:padding,onChange:function(e){setPadding(+e.target.value)},className:"flex-1 accent-violet-500"}),E("span",{className:"text-xs font-mono text-zinc-500 w-8 text-right"},padding+"px"))))),
