@@ -333,19 +333,20 @@ function drawWeapon(ctx, wpn, bd, size, pose, position) {
   var wi=wpn.img, ar=wi.width/Math.max(wi.height,1);
   var pct=(wpn.size||30)/100;
   var ws=size*pct, ww=ws*ar, wh=ws;
-  var tP=pose.torso||{}, by=pose.by||0;
+  var tP=pose.torso||{}, by=pose.by||0, bx=pose.bx||0;
+  var userRot=(wpn.rot||0)*Math.PI/180;
   if(position==="back"){
     var lm=bd?bd.landmarks:null;
     var shY=lm?lm.shoulderY*size:size*0.25;
     var hipY=lm?lm.hipY*size:size*0.52;
-    var backCx=size*0.42+(tP.ox||0)*0.3;
-    var backCy=(shY+hipY)*0.5+by+(tP.oy||0)*0.3;
-    var bRot=(tP.rot||0)*0.3;
+    var bo=wpn.backOff||{x:0,y:0};
+    var backCx=size*0.48+bx+(tP.ox||0)*0.3+(bo.x*size*0.4);
+    var backCy=(shY+hipY)*0.5+by+(tP.oy||0)*0.3+(bo.y*size*0.4);
+    var bRot=(tP.rot||0)*0.5;
     ctx.save();
     ctx.translate(backCx, backCy);
     ctx.rotate(bRot);
     ctx.globalAlpha=0.75;
-    var userRot=(wpn.rot||0)*Math.PI/180;
     if(wpn.type==="gun"){
       ctx.rotate(-Math.PI/2+0.1+userRot);
       ctx.drawImage(wi,-ww*0.5,-wh*0.4,ww*0.7,wh*0.7);
@@ -355,18 +356,25 @@ function drawWeapon(ctx, wpn, bd, size, pose, position) {
     }
     ctx.restore();
   } else {
-    var aRot=pose.rightArm?pose.rightArm.rot||0:0;
-    var lm=bd?bd.landmarks:null;
-    var sY=lm?lm.shoulderY*size:size*0.28;
-    var hY_lm=lm?lm.hipY*size:size*0.52;
-    var aLen=(hY_lm-sY)*0.9;
-    var shoulder_x=size*0.55+(tP.ox||0);
-    var shoulder_y=sY+by+(tP.oy||0);
-    var hX=shoulder_x+Math.sin(aRot)*aLen;
-    var hY=shoulder_y+Math.cos(aRot)*aLen;
+    var ao=wpn.atkOff||{x:0,y:0};
+    var armP=pose.leftUpperArm||pose.leftArm||pose.rightArm||{};
+    var foreP=pose.leftLowerArm||{};
+    var aRot=armP.rot||0;
+    var lm2=bd?bd.landmarks:null;
+    var sY=lm2?lm2.shoulderY*size:size*0.28;
+    var elbY=lm2?lm2.elbowY*size:(sY+size*0.14);
+    var aLen=elbY-sY;
+    var fLen=lm2?(lm2.hipY*size-elbY)*0.7:size*0.15;
+    var shoulder_x=size*0.45+bx+(tP.ox||0)+(ao.x*size*0.3);
+    var shoulder_y=sY+by+(tP.oy||0)+(ao.y*size*0.3);
+    var eX=shoulder_x+Math.sin(aRot)*aLen;
+    var eY=shoulder_y+Math.cos(aRot)*aLen;
+    var totalRot=aRot+(foreP.rot||0);
+    var hX=eX+Math.sin(totalRot)*fLen;
+    var hY=eY+Math.cos(totalRot)*fLen;
     ctx.save();
     ctx.translate(hX,hY);
-    ctx.rotate(aRot+0.1+(wpn.rot||0)*Math.PI/180);
+    ctx.rotate(totalRot+0.1+userRot);
     ctx.drawImage(wi,0,-wh*0.5,ww,wh);
     ctx.restore();
   }
