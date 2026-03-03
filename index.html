@@ -258,6 +258,154 @@ async function extractBodyParts(img) {
 }
 
 // ============================================================
+// CLAUDE VISION API - analyzes character anatomy
+// Returns per-pixel body part assignment using Claude's understanding
+// ============================================================
+async function analyzeWithClaude(img) {
+  var c = document.createElement("canvas");
+  c.width = img.width; c.height = img.height;
+  var ctx = c.getContext("2d");
+  ctx.drawImage(img, 0, 0);
+  var dataUrl = c.toDataURL("image/png");
+  var base64 = dataUrl.split(",")[1];
+
+  var response = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({
+      model: "claude-sonnet-4-20250514",
+      max_tokens: 1000,
+      messages: [{
+        role: "user",
+        content: [
+          {type:"image", source:{type:"base64", media_type:"image/png", data:base64}},
+          {type:"text", text:"Analyze this game character image. Return ONLY a JSON object with these body part bounding boxes as fractions (0-1) of image dimensions: {\"head\":{\"t\":top,\"b\":bottom,\"l\":left,\"r\":right}, \"torso\":{...}, \"leftArm\":{...}, \"rightArm\":{...}, \"leftLeg\":{...}, \"rightLeg\":{...}}. Each part needs t,b,l,r as 0-1 fractions. Be precise about where each body part starts and ends. Arms include hands. Legs include feet. No text outside the JSON."}
+        ]
+      }]
+    })
+  });
+
+  var data = await response.json();
+  var text = "";
+  if (data.content) data.content.forEach(function(b){if(b.type==="text") text+=b.text;});
+  text = text.replace(/```json|```/g,"").trim();
+  var parsed = JSON.parse(text);
+
+  // Validate
+  var keys = ["head","torso","leftArm","rightArm","leftLeg","rightLeg"];
+  var valid = keys.every(function(k){
+    return parsed[k] && typeof parsed[k].t==="number" && typeof parsed[k].b==="number"
+      && typeof parsed[k].l==="number" && typeof parsed[k].r==="number";
+  });
+  if (!valid) throw new Error("Invalid Claude response");
+  return parsed;
+}
+
+// Extract body parts using Claude's bounding boxes for pixel assignment
+async function extractWithClaude(img) {
+  var claudeBoxes = await analyzeWithClaude(img);
+  var c = document.createElement("canvas");
+  c.width = img.width; c.height = img.height;
+  var ctx = c.getContext("2d");
+  ctx.drawImage(img, 0, 0);
+  var imgData = ctx.getImageData(0, 0, c.width, c.height);
+  var d = imgData.data;
+  var w = c.width, h = c.height;
+
+  var partNames = ["head","torso","leftArm","rightArm","leftLeg","rightLeg"];
+  // Convert fraction boxes to pixel boxes
+  var boxes = {};
+  partNames.forEach(function(name) {
+    var b = claudeBoxes[name];
+    boxes[name] = {
+      t: Math.round(b.t * h), b: Math.round(b.b * h),
+      l: Math.round(b.l * w), r: Math.round(b.r * w),
+      cx: Math.round((b.l + b.r) / 2 * w),
+      cy: Math.round((b.t + b.b) / 2 * h)
+    };
+  });
+
+  // Assign each opaque pixel to closest box center (weighted by containment)
+  var groupMap = new Int8Array(w * h).fill(-1);
+  for (var py = 0; py < h; py++) {
+    for (var px = 0; px < w; px++) {
+      var idx = py * w + px;
+      if (d[idx * 4 + 3] <= 30) continue;
+      var bestGroup = -1, bestScore = -Infinity;
+      for (var gi = 0; gi < 6; gi++) {
+        var bx = boxes[partNames[gi]];
+        var inside = (px >= bx.l && px <= bx.r && py >= bx.t && py <= bx.b);
+        var dx = px - bx.cx, dy = py - bx.cy;
+        var dist = Math.sqrt(dx*dx + dy*dy);
+        var maxDim = Math.max(bx.r - bx.l, bx.b - bx.t) || 1;
+        var score = inside ? (1000 - dist/maxDim) : (-dist/maxDim);
+        if (score > bestScore) { bestScore = score; bestGroup = gi; }
+      }
+      groupMap[idx] = bestGroup;
+    }
+  }
+
+  // Compute pivots from boxes
+  var pivots = {
+    head:     {x: boxes.head.cx, y: boxes.head.b},
+    torso:    {x: boxes.torso.cx, y: (boxes.torso.t + boxes.torso.b)/2},
+    leftArm:  {x: boxes.leftArm.r, y: boxes.leftArm.t},
+    rightArm: {x: boxes.rightArm.l, y: boxes.rightArm.t},
+    leftLeg:  {x: boxes.leftLeg.cx, y: boxes.leftLeg.t},
+    rightLeg: {x: boxes.rightLeg.cx, y: boxes.rightLeg.t}
+  };
+
+  // Extract part canvases with overlap
+  var overlapPx = Math.max(3, Math.floor(Math.max(w,h) * 0.04));
+  var parts = {};
+  for (var pi = 0; pi < 6; pi++) {
+    var pc = document.createElement("canvas");
+    pc.width = w; pc.height = h;
+    var pctx = pc.getContext("2d");
+    var pimg = pctx.createImageData(w, h);
+    var pd = pimg.data;
+    for (var py2 = 0; py2 < h; py2++) {
+      for (var px2 = 0; px2 < w; px2++) {
+        var pidx = py2*w+px2;
+        if (d[pidx*4+3] <= 10) continue;
+        var si = pidx*4;
+        if (groupMap[pidx] === pi) {
+          pd[si]=d[si]; pd[si+1]=d[si+1]; pd[si+2]=d[si+2]; pd[si+3]=d[si+3];
+        } else {
+          var nearOwn = false;
+          for (var ody=-overlapPx; ody<=overlapPx && !nearOwn; ody+=2) {
+            for (var odx=-overlapPx; odx<=overlapPx && !nearOwn; odx+=2) {
+              var ony=py2+ody, onx=px2+odx;
+              if(ony>=0&&ony<h&&onx>=0&&onx<w && groupMap[ony*w+onx]===pi) nearOwn=true;
+            }
+          }
+          if (nearOwn) {
+            pd[si]=d[si]; pd[si+1]=d[si+1]; pd[si+2]=d[si+2];
+            pd[si+3]=Math.round(d[si+3]*0.4);
+          }
+        }
+      }
+    }
+    pctx.putImageData(pimg, 0, 0);
+    var partImg = new Image();
+    partImg.src = pc.toDataURL();
+    partImg.width = w; partImg.height = h;
+    parts[partNames[pi]] = {img: partImg, pivot: pivots[partNames[pi]]};
+  }
+
+  return {
+    parts: parts, width: w, height: h, aiUsed: true, claudeUsed: true,
+    coverage: 1.0,
+    landmarks: {
+      topY: boxes.head.t/h, neckY: boxes.head.b/h,
+      shoulderY: Math.min(boxes.leftArm.t, boxes.rightArm.t)/h,
+      hipY: Math.max(boxes.leftLeg.t, boxes.rightLeg.t)/h,
+      botY: Math.max(boxes.leftLeg.b, boxes.rightLeg.b)/h
+    }
+  };
+}
+
+// ============================================================
 // DRAWING ENGINE - renders extracted body part canvases
 // ============================================================
 function drawPartImg(ctx, partData, imgW, imgH, size, rot, ox, oy, alpha) {
@@ -470,6 +618,7 @@ function App(){
   var _rming=useState(false),removing=_rming[0],setRemoving=_rming[1];
   var _bd=useState(null),bodyData=_bd[0],setBodyData=_bd[1];
   var _status=useState(""),aiStatus=_status[0],setAiStatus=_status[1];
+  var _claude=useState(false),useClaude=_claude[0],setUseClaude=_claude[1];
   var fileInputRef=useRef(null);
 
   var handleUpload=useCallback(function(e){
@@ -498,14 +647,20 @@ function App(){
     },50);
   },[rawImg,removeBg,bgTolerance]);
 
-  // BodyPix extraction
+  // Body part extraction - Claude or BodyPix
   useEffect(function(){
     if(!imgEl) { setBodyData(null); setAiStatus(""); return; }
     var cancelled = false;
     async function run() {
-      setAiStatus("Loading BodyPix AI model...");
       try {
-        var bd = await extractBodyParts(imgEl);
+        var bd;
+        if (useClaude) {
+          setAiStatus("Analyzing with Claude Vision...");
+          bd = await extractWithClaude(imgEl);
+        } else {
+          setAiStatus("Loading BodyPix AI model...");
+          bd = await extractBodyParts(imgEl);
+        }
         if (cancelled) return;
         if (bd) {
           var names = Object.keys(bd.parts);
@@ -516,7 +671,9 @@ function App(){
               loaded++;
               if(loaded===names.length && !cancelled){
                 setBodyData(bd);
-                if (bd.aiUsed) {
+                if (bd.claudeUsed) {
+                  setAiStatus("\u2713 Claude Vision: anatomic analysis");
+                } else if (bd.aiUsed) {
                   setAiStatus("\u2713 BodyPix: 24-part segmentation (" + Math.round(bd.coverage*100) + "% coverage)");
                 } else {
                   setAiStatus("\u2713 Heuristic fallback (low AI coverage)");
@@ -533,7 +690,7 @@ function App(){
     }
     run();
     return function(){ cancelled = true; };
-  },[imgEl]);
+  },[imgEl, useClaude]);
 
   var fitImage=useCallback(function(img,ts){
     var sc=(ts*0.75)/Math.max(img.width,img.height);
@@ -612,7 +769,7 @@ function App(){
 
   return E("div",{className:"min-h-screen bg-zinc-950 text-zinc-100 p-4 md:p-8"},
     E("div",{className:"max-w-6xl mx-auto"},
-      E("div",{className:"mb-8"},E("h1",{className:"text-3xl font-bold tracking-tight bg-gradient-to-r from-violet-400 to-amber-300 bg-clip-text text-transparent"},"Sprite Sheet Generator"),E("p",{className:"text-zinc-500 text-sm mt-1"},"Upload character \u2192 BodyPix AI segmentation \u2192 per-pixel body parts \u2192 animated sprite sheet")),
+      E("div",{className:"mb-8"},E("h1",{className:"text-3xl font-bold tracking-tight bg-gradient-to-r from-violet-400 to-amber-300 bg-clip-text text-transparent"},"Sprite Sheet Generator"),E("p",{className:"text-zinc-500 text-sm mt-1"},"Upload character \u2192 AI body segmentation \u2192 per-pixel body parts \u2192 animated sprite sheet")),
       E("div",{className:"grid grid-cols-1 lg:grid-cols-3 gap-6"},
         E("div",{className:"lg:col-span-1 space-y-5"},
           E("div",{onDrop:handleDrop,onDragOver:function(e){e.preventDefault()},onClick:function(){fileInputRef.current&&fileInputRef.current.click()},className:"border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-all "+(image?"border-violet-500/50 bg-violet-500/5":"border-zinc-700 hover:border-zinc-500 bg-zinc-900/50")},
@@ -621,6 +778,7 @@ function App(){
           E("div",null,E("label",{className:"text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2 block"},"Frame Size"),E("div",{className:"flex flex-wrap gap-2"},SIZES.map(function(s){return btn(charSize===s,function(){setCharSize(s)},s+"px");}))),
           E("div",null,E("label",{className:"text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2 block"},"Frames per Animation"),E("div",{className:"flex flex-wrap gap-2"},FRAME_OPTIONS.map(function(f){return btn(frameCount===f,function(){setFrameCount(f)},String(f));})),E("p",{className:"text-xs text-zinc-600 mt-2 font-mono"},"Cycle: "+pingPong)),
           E("div",null,E("label",{className:"text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2 block"},"Options"),E("div",{className:"space-y-2"},chk("Drop Shadow",addShadow,setAddShadow),
+            E("label",{key:"claude",className:"flex items-center gap-3 p-2.5 rounded-lg bg-zinc-900/50 border "+(useClaude?"border-amber-500/50":"border-zinc-800")+" cursor-pointer hover:border-zinc-700 transition-all"},E("div",{className:"w-5 h-5 rounded flex items-center justify-center transition-all "+(useClaude?"bg-amber-500":"bg-zinc-700"),onClick:function(e){e.preventDefault();setUseClaude(!useClaude);}},useClaude&&E("span",{className:"text-white text-xs"},"\u2713")),E("span",{className:"text-sm "+(useClaude?"text-amber-300":"text-zinc-300")},"Claude Vision AI"),E("span",{className:"text-xs text-zinc-600 ml-auto"},"claude.ai only")),
             E("label",{key:"rmbg",className:"flex items-center gap-3 p-2.5 rounded-lg bg-zinc-900/50 border border-zinc-800 cursor-pointer hover:border-zinc-700 transition-all"},E("div",{className:"w-5 h-5 rounded flex items-center justify-center transition-all "+(removeBg?"bg-violet-600":"bg-zinc-700"),onClick:function(e){e.preventDefault();setRemoveBg(!removeBg);}},removeBg&&E("span",{className:"text-white text-xs"},"\u2713")),E("span",{className:"text-sm text-zinc-300"},removing?"Removing BG...":"Remove Background")),
             removeBg&&E("div",{className:"flex items-center gap-3 p-2.5 rounded-lg bg-zinc-900/50 border border-zinc-800"},E("span",{className:"text-sm text-zinc-300"},"Tolerance"),E("input",{type:"range",min:5,max:80,value:bgTolerance,onChange:function(e){setBgTolerance(+e.target.value)},className:"flex-1 accent-violet-500"}),E("span",{className:"text-xs font-mono text-zinc-500 w-8 text-right"},bgTolerance)),
             E("div",{className:"flex items-center gap-3 p-2.5 rounded-lg bg-zinc-900/50 border border-zinc-800"},E("span",{className:"text-sm text-zinc-300"},"Padding"),E("input",{type:"range",min:0,max:16,value:padding,onChange:function(e){setPadding(+e.target.value)},className:"flex-1 accent-violet-500"}),E("span",{className:"text-xs font-mono text-zinc-500 w-8 text-right"},padding+"px"))))),
@@ -629,7 +787,7 @@ function App(){
           spriteSheet&&E("div",{className:"space-y-4"},
             E("div",{className:"flex gap-4 items-start flex-wrap"},
               E("div",{className:"flex-shrink-0"},E("label",{className:"text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2 block"},"Preview"),E("div",{className:"flex flex-col items-center gap-2"},E(PreviewCanvas,null),E("button",{onClick:function(){setPlaying(!playing)},className:"px-4 py-2 rounded-lg text-sm font-semibold transition-all "+(playing?"bg-violet-600 text-white shadow-lg shadow-violet-600/25":"bg-zinc-800 text-zinc-400 hover:bg-zinc-700")},playing?"Pause":"Play"))),
-              E("div",{className:"flex-1 text-xs text-zinc-500 space-y-1 pt-6"},E("p",null,E("span",{className:"text-zinc-400"},"Sheet: "),frameCount*(charSize+padding*2)+"\u00d7"+selectedAnims.length*(charSize+padding*2)+"px"),E("p",null,E("span",{className:"text-zinc-400"},"Cell: "),(charSize+padding*2)+"px"),E("p",null,E("span",{className:"text-zinc-400"},"Frames: "),frameCount*selectedAnims.length),E("p",null,E("span",{className:"text-zinc-400"},"Cycle: "),E("span",{className:"font-mono text-violet-400"},pingPong)),bodyData&&E("p",{className:"text-emerald-600 mt-1"},bodyData.aiUsed?"\u2713 BodyPix neural net":"\u2713 Heuristic"),lm&&E("p",{className:"text-zinc-600"},"Neck:"+Math.round(lm.neckY*100)+"% Sh:"+Math.round(lm.shoulderY*100)+"% Hip:"+Math.round(lm.hipY*100)+"%"))),
+              E("div",{className:"flex-1 text-xs text-zinc-500 space-y-1 pt-6"},E("p",null,E("span",{className:"text-zinc-400"},"Sheet: "),frameCount*(charSize+padding*2)+"\u00d7"+selectedAnims.length*(charSize+padding*2)+"px"),E("p",null,E("span",{className:"text-zinc-400"},"Cell: "),(charSize+padding*2)+"px"),E("p",null,E("span",{className:"text-zinc-400"},"Frames: "),frameCount*selectedAnims.length),E("p",null,E("span",{className:"text-zinc-400"},"Cycle: "),E("span",{className:"font-mono text-violet-400"},pingPong)),bodyData&&E("p",{className:"text-emerald-600 mt-1"},bodyData.claudeUsed?"\u2713 Claude Vision":bodyData.aiUsed?"\u2713 BodyPix neural net":"\u2713 Heuristic"),lm&&E("p",{className:"text-zinc-600"},"Neck:"+Math.round(lm.neckY*100)+"% Sh:"+Math.round(lm.shoulderY*100)+"% Hip:"+Math.round(lm.hipY*100)+"%"))),
             E("div",null,E("label",{className:"text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2 block"},"Sprite Sheet"),E("div",{className:"overflow-auto rounded-xl border border-zinc-800 p-2",style:{background:"repeating-conic-gradient(#27272a 0% 25%,#18181b 0% 50%) 0 0/16px 16px"}},E("img",{src:spriteSheet,className:"max-w-full",style:{imageRendering:charSize<=64?"pixelated":"auto"}}))),
             E("a",{href:spriteSheet,download:"spritesheet_"+charSize+"px_"+selectedAnims.join("-")+"_"+frameCount+"f.png",className:"inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold transition-all shadow-lg shadow-emerald-600/20"},"\u2B07 Download PNG"))))));
 }
