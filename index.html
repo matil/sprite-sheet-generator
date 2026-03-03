@@ -375,10 +375,22 @@ var ANIMATIONS = {
   attack: { label:"Attack", desc:"Weapon attack", generate: function(ctx,img,f,tot,sz,bd,wpn) {
     var t=f/Math.max(tot-1,1);
     var p={head:{},torso:{},leftArm:{},rightArm:{},leftLeg:{},rightLeg:{}};
-    if(t<0.3){var q=t/0.3,e=1-Math.pow(1-q,2); p.torso={rot:-e*0.18,ox:-e*sz*0.02}; p.rightArm={rot:-e*1.5}; p.leftArm={rot:e*0.4}; p.rightLeg={rot:-e*0.2}; p.leftLeg={rot:e*0.15}; p.head={rot:-e*0.08};}
-    else if(t<0.45){var q=(t-0.3)/0.15,e=q*q*q; p.torso={rot:-0.18+e*0.42,ox:-0.02*sz+e*sz*0.06}; p.rightArm={rot:-1.5+e*3.0}; p.leftArm={rot:0.4-e*0.6}; p.rightLeg={rot:-0.2+e*0.35}; p.leftLeg={rot:0.15-e*0.1}; p.head={rot:-0.08+e*0.18};}
-    else if(t<0.55){var q=(t-0.45)/0.1; p.torso={rot:0.24+q*0.04,ox:sz*0.04}; p.rightArm={rot:1.5+q*0.2}; p.leftArm={rot:-0.2-q*0.1}; p.rightLeg={rot:0.15}; p.leftLeg={rot:0.05}; p.head={rot:0.1+q*0.02}; var sh=Math.sin(q*Math.PI*6)*0.02; p.torso.rot+=sh; p.head.rot+=sh;}
-    else{var q=(t-0.55)/0.45,e=1-Math.pow(1-q,3); p.torso={rot:0.28*(1-e)}; p.rightArm={rot:1.7*(1-e)}; p.leftArm={rot:-0.3*(1-e)}; p.rightLeg={rot:0.15*(1-e)}; p.leftLeg={rot:0.05*(1-e)}; p.head={rot:0.12*(1-e)};}
+    if(wpn&&wpn.type==="gun"){
+      if(t<0.2){var q=t/0.2,e=1-Math.pow(1-q,2); p.torso={rot:e*0.06}; p.rightArm={rot:-e*0.9}; p.leftArm={rot:-e*0.7}; p.rightLeg={rot:-e*0.08}; p.leftLeg={rot:e*0.1}; p.head={rot:e*0.04};}
+      else if(t<0.35){var q=(t-0.2)/0.15; var recoil=Math.sin(q*Math.PI)*0.4; p.torso={rot:0.06-recoil*0.15}; p.rightArm={rot:-0.9+recoil}; p.leftArm={rot:-0.7+recoil*0.6}; p.head={rot:0.04-recoil*0.08}; p.rightLeg={rot:-0.08}; p.leftLeg={rot:0.1};}
+      else if(t<0.55){var q=(t-0.35)/0.2; var settle=Math.sin(q*Math.PI*3)*0.08*(1-q); p.torso={rot:0.06+settle*0.5}; p.rightArm={rot:-0.9+settle}; p.leftArm={rot:-0.7+settle*0.6}; p.head={rot:0.04+settle*0.3}; p.rightLeg={rot:-0.08}; p.leftLeg={rot:0.1};}
+      else{var q=(t-0.55)/0.45,e=1-Math.pow(1-q,2); p.torso={rot:0.06*(1-e)}; p.rightArm={rot:-0.9*(1-e)}; p.leftArm={rot:-0.7*(1-e)}; p.head={rot:0.04*(1-e)}; p.rightLeg={rot:-0.08*(1-e)}; p.leftLeg={rot:0.1*(1-e)};}
+    } else if(wpn&&wpn.type==="melee"){
+      if(t<0.3){var q=t/0.3,e=1-Math.pow(1-q,2); p.torso={rot:-e*0.22,ox:-e*sz*0.02}; p.rightArm={rot:-e*2.2}; p.leftArm={rot:e*0.3}; p.rightLeg={rot:-e*0.15}; p.leftLeg={rot:e*0.12}; p.head={rot:-e*0.1};}
+      else if(t<0.45){var q=(t-0.3)/0.15,e=q*q*q; p.torso={rot:-0.22+e*0.52,ox:-0.02*sz+e*sz*0.06}; p.rightArm={rot:-2.2+e*4.2}; p.leftArm={rot:0.3-e*0.5}; p.rightLeg={rot:-0.15+e*0.3}; p.leftLeg={rot:0.12-e*0.08}; p.head={rot:-0.1+e*0.24};}
+      else if(t<0.55){var q=(t-0.45)/0.1; p.torso={rot:0.3+q*0.04,ox:sz*0.04}; p.rightArm={rot:2.0+q*0.15}; p.leftArm={rot:-0.2}; p.rightLeg={rot:0.15}; p.leftLeg={rot:0.04}; p.head={rot:0.14+q*0.02};}
+      else{var q=(t-0.55)/0.45,e=1-Math.pow(1-q,3); p.torso={rot:0.34*(1-e)}; p.rightArm={rot:2.15*(1-e)}; p.leftArm={rot:-0.2*(1-e)}; p.rightLeg={rot:0.15*(1-e)}; p.leftLeg={rot:0.04*(1-e)}; p.head={rot:0.16*(1-e)};}
+    } else {
+      if(t<0.3){var q=t/0.3,e=1-Math.pow(1-q,2); p.torso={rot:-e*0.18,ox:-e*sz*0.02}; p.rightArm={rot:-e*1.5}; p.leftArm={rot:e*0.4}; p.rightLeg={rot:-e*0.2}; p.leftLeg={rot:e*0.15}; p.head={rot:-e*0.08};}
+      else if(t<0.45){var q=(t-0.3)/0.15,e=q*q*q; p.torso={rot:-0.18+e*0.42,ox:-0.02*sz+e*sz*0.06}; p.rightArm={rot:-1.5+e*3.0}; p.leftArm={rot:0.4-e*0.6}; p.rightLeg={rot:-0.2+e*0.35}; p.leftLeg={rot:0.15-e*0.1}; p.head={rot:-0.08+e*0.18};}
+      else if(t<0.55){var q=(t-0.45)/0.1; p.torso={rot:0.24+q*0.04,ox:sz*0.04}; p.rightArm={rot:1.5+q*0.2}; p.leftArm={rot:-0.2-q*0.1}; p.rightLeg={rot:0.15}; p.leftLeg={rot:0.05}; p.head={rot:0.1+q*0.02};}
+      else{var q=(t-0.55)/0.45,e=1-Math.pow(1-q,3); p.torso={rot:0.28*(1-e)}; p.rightArm={rot:1.7*(1-e)}; p.leftArm={rot:-0.3*(1-e)}; p.rightLeg={rot:0.15*(1-e)}; p.leftLeg={rot:0.05*(1-e)}; p.head={rot:0.12*(1-e)};}
+    }
     if(bd) drawAnimChar(ctx,bd,sz,p); else drawCharFallback(ctx,img,sz,p);
     if(wpn&&wpn.img){var ws=sz*0.32,wi=wpn.img,ar=wi.width/Math.max(wi.height,1),ww=ws*ar,wh=ws,aRot=p.rightArm?p.rightArm.rot||0:0;ctx.save();ctx.translate(sz*0.62,sz*0.32);ctx.rotate(aRot*0.7);ctx.drawImage(wi,-ww*0.2,-wh*0.5,ww,wh);ctx.restore();}
 
