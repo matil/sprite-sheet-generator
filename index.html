@@ -4,6 +4,8 @@
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
 <title>Sprite Sheet Generator</title>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.17.0"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection@2.1.3"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
@@ -15,11 +17,66 @@
 const{useState,useRef,useCallback,useEffect}=React;
 
 // ============================================================
-// SILHOUETTE ANALYZER
-// Scans pixel data to find body landmarks: head top, neck,
-// shoulders, waist, hips, leg split, feet. Returns bodyMap.
+// AI POSE DETECTOR - MoveNet in-browser
+// Returns 17 keypoints: nose, eyes, ears, shoulders, elbows,
+// wrists, hips, knees, ankles with x,y,score
 // ============================================================
-function analyzeSilhouette(img) {
+var _poseDetector = null;
+var _detectorLoading = false;
+var _detectorCallbacks = [];
+
+function getPoseDetector() {
+  return new Promise(function(resolve, reject) {
+    if (_poseDetector) { resolve(_poseDetector); return; }
+    _detectorCallbacks.push({resolve:resolve, reject:reject});
+    if (_detectorLoading) return;
+    _detectorLoading = true;
+    console.log("Loading MoveNet pose detector...");
+    poseDetection.createDetector(
+      poseDetection.SupportedModels.MoveNet,
+      { modelType: poseDetection.movenet.modelType.SINGLEPOSE_THUNDER }
+    ).then(function(d) {
+      _poseDetector = d;
+      console.log("MoveNet loaded");
+      _detectorCallbacks.forEach(function(cb){cb.resolve(d);});
+      _detectorCallbacks = [];
+    }).catch(function(e) {
+      console.error("MoveNet load failed:", e);
+      _detectorCallbacks.forEach(function(cb){cb.reject(e);});
+      _detectorCallbacks = [];
+      _detectorLoading = false;
+    });
+  });
+}
+
+// MoveNet keypoint indices
+var KP = {NOSE:0,L_EYE:1,R_EYE:2,L_EAR:3,R_EAR:4,L_SHOULDER:5,R_SHOULDER:6,
+  L_ELBOW:7,R_ELBOW:8,L_WRIST:9,R_WRIST:10,L_HIP:11,R_HIP:12,
+  L_KNEE:13,R_KNEE:14,L_ANKLE:15,R_ANKLE:16};
+
+async function detectPose(img) {
+  var detector = await getPoseDetector();
+  // MoveNet needs an actual visible image element or canvas
+  var c = document.createElement("canvas");
+  c.width = img.width; c.height = img.height;
+  var ctx = c.getContext("2d");
+  ctx.drawImage(img, 0, 0);
+  var poses = await detector.estimatePoses(c);
+  if (!poses || poses.length === 0) return null;
+  var kps = poses[0].keypoints;
+  // Check confidence
+  var avgScore = kps.reduce(function(s,k){return s+k.score;},0)/kps.length;
+  console.log("Pose detected, avg confidence:", avgScore.toFixed(2));
+  return { keypoints: kps, width: img.width, height: img.height, avgScore: avgScore };
+}
+
+
+// ============================================================
+// BODY PART EXTRACTOR
+// Uses AI pose keypoints (if available) or silhouette heuristics
+// Assigns every opaque pixel to a body part, extracts masked canvases
+// ============================================================
+function extractBodyParts(img, poseData) {
   var c = document.createElement("canvas");
   c.width = img.width; c.height = img.height;
   var ctx = c.getContext("2d");
@@ -28,171 +85,219 @@ function analyzeSilhouette(img) {
   var d = id.data;
   var w = c.width, h = c.height;
 
-  // Build per-row width profile: for each row, find leftmost and rightmost opaque pixel
+  // Build row profile
   var rows = [];
-  for (var y = 0; y < h; y++) {
-    var left = -1, right = -1, count = 0;
-    for (var x = 0; x < w; x++) {
-      if (d[(y * w + x) * 4 + 3] > 30) {
-        if (left < 0) left = x;
-        right = x;
-        count++;
+  for (var y=0;y<h;y++) {
+    var left=-1,right=-1,count=0;
+    for (var x=0;x<w;x++) {
+      if(d[(y*w+x)*4+3]>30){if(left<0)left=x;right=x;count++;}
+    }
+    rows.push({left:left,right:right,width:left>=0?right-left+1:0,count:count,cx:left>=0?(left+right)/2:w/2});
+  }
+  var topY=0,botY=h-1;
+  for(var y2=0;y2<h;y2++){if(rows[y2].width>0){topY=y2;break;}}
+  for(var y3=h-1;y3>=0;y3--){if(rows[y3].width>0){botY=y3;break;}}
+  var charH=botY-topY+1;
+  if(charH<8) return null;
+
+  // Determine joint positions - from AI or heuristic
+  var joints = {};
+  var aiUsed = false;
+
+  if (poseData && poseData.avgScore > 0.15) {
+    var kps = poseData.keypoints;
+    var conf = function(i){return kps[i].score > 0.1;};
+    var kx = function(i){return kps[i].x;};
+    var ky = function(i){return kps[i].y;};
+
+    // Head top: above nose by distance from nose to shoulder
+    var noseY = conf(KP.NOSE) ? ky(KP.NOSE) : topY;
+    var headTop = Math.max(topY, noseY - (ky(KP.L_SHOULDER) - noseY) * 0.8);
+
+    // Neck: midpoint between shoulders, slightly up
+    var neckX = (conf(KP.L_SHOULDER)&&conf(KP.R_SHOULDER)) ? (kx(KP.L_SHOULDER)+kx(KP.R_SHOULDER))/2 : w/2;
+    var neckY = (conf(KP.L_SHOULDER)&&conf(KP.R_SHOULDER)) ? Math.min(ky(KP.L_SHOULDER),ky(KP.R_SHOULDER))-charH*0.02 : topY+charH*0.28;
+
+    joints.headTop = headTop;
+    joints.neckX = neckX;
+    joints.neckY = neckY;
+    joints.lShoulder = conf(KP.L_SHOULDER) ? {x:kx(KP.L_SHOULDER),y:ky(KP.L_SHOULDER)} : {x:w*0.35,y:topY+charH*0.28};
+    joints.rShoulder = conf(KP.R_SHOULDER) ? {x:kx(KP.R_SHOULDER),y:ky(KP.R_SHOULDER)} : {x:w*0.65,y:topY+charH*0.28};
+    joints.lElbow = conf(KP.L_ELBOW) ? {x:kx(KP.L_ELBOW),y:ky(KP.L_ELBOW)} : null;
+    joints.rElbow = conf(KP.R_ELBOW) ? {x:kx(KP.R_ELBOW),y:ky(KP.R_ELBOW)} : null;
+    joints.lWrist = conf(KP.L_WRIST) ? {x:kx(KP.L_WRIST),y:ky(KP.L_WRIST)} : null;
+    joints.rWrist = conf(KP.R_WRIST) ? {x:kx(KP.R_WRIST),y:ky(KP.R_WRIST)} : null;
+    joints.lHip = conf(KP.L_HIP) ? {x:kx(KP.L_HIP),y:ky(KP.L_HIP)} : {x:w*0.4,y:topY+charH*0.55};
+    joints.rHip = conf(KP.R_HIP) ? {x:kx(KP.R_HIP),y:ky(KP.R_HIP)} : {x:w*0.6,y:topY+charH*0.55};
+    joints.lKnee = conf(KP.L_KNEE) ? {x:kx(KP.L_KNEE),y:ky(KP.L_KNEE)} : null;
+    joints.rKnee = conf(KP.R_KNEE) ? {x:kx(KP.R_KNEE),y:ky(KP.R_KNEE)} : null;
+    joints.lAnkle = conf(KP.L_ANKLE) ? {x:kx(KP.L_ANKLE),y:ky(KP.L_ANKLE)} : null;
+    joints.rAnkle = conf(KP.R_ANKLE) ? {x:kx(KP.R_ANKLE),y:ky(KP.R_ANKLE)} : null;
+
+    // Crotch point: midpoint between hips
+    joints.crotchY = (joints.lHip.y + joints.rHip.y) / 2;
+    joints.crotchX = (joints.lHip.x + joints.rHip.x) / 2;
+    aiUsed = true;
+    console.log("Using AI joints for body part extraction");
+  } else {
+    // Heuristic fallback
+    var sw=[];
+    for(var i=0;i<h;i++){var sum=0,cnt=0;for(var j=Math.max(0,i-2);j<=Math.min(h-1,i+2);j++){sum+=rows[j].width;cnt++;}sw.push(sum/cnt);}
+
+    var headMaxW=0,headMaxY=topY;
+    for(var y4=topY;y4<topY+Math.floor(charH*0.35);y4++){if(sw[y4]>headMaxW){headMaxW=sw[y4];headMaxY=y4;}}
+    var nkY=headMaxY,nkW=headMaxW;
+    for(var y5=headMaxY+1;y5<topY+Math.floor(charH*0.4);y5++){if(sw[y5]<nkW&&sw[y5]>0){nkW=sw[y5];nkY=y5;}if(sw[y5]>nkW*1.3&&y5>headMaxY+2)break;}
+    var shY=nkY,shW=0;
+    for(var y6=topY+Math.floor(charH*0.2);y6<topY+Math.floor(charH*0.5);y6++){if(sw[y6]>shW){shW=sw[y6];shY=y6;}}
+    var waY=shY,waW=shW;
+    for(var y7=shY+1;y7<topY+Math.floor(charH*0.7);y7++){if(sw[y7]<waW&&sw[y7]>0){waW=sw[y7];waY=y7;}}
+    var hiY=waY,hiW=0;
+    for(var y8=topY+Math.floor(charH*0.4);y8<topY+Math.floor(charH*0.65);y8++){if(sw[y8]>hiW){hiW=sw[y8];hiY=y8;}}
+    var crY=hiY+Math.floor((botY-hiY)*0.1);
+    var ctrX=Math.round(w/2);
+    for(var y9=hiY;y9<botY-2;y9++){var cc=0,cl=Math.max(0,ctrX-Math.floor(w*0.06)),cr=Math.min(w-1,ctrX+Math.floor(w*0.06));for(var x2=cl;x2<=cr;x2++){if(d[(y9*w+x2)*4+3]>30)cc++;}if(cc<(cr-cl+1)*0.35&&y9>hiY+2){crY=y9;break;}}
+
+    var shRow=rows[shY];
+    joints.headTop=topY; joints.neckX=shRow?shRow.cx:w/2; joints.neckY=nkY;
+    joints.lShoulder={x:shRow?shRow.left+shW*0.15:w*0.3, y:shY};
+    joints.rShoulder={x:shRow?shRow.right-shW*0.15:w*0.7, y:shY};
+    joints.lHip={x:w*0.4, y:hiY};
+    joints.rHip={x:w*0.6, y:hiY};
+    joints.crotchY=crY; joints.crotchX=w/2;
+    console.log("Using silhouette heuristic joints");
+  }
+
+  // Assign every pixel to a body part using joints
+  // Distance-based assignment with anatomical priors
+  var partMap = new Uint8Array(w * h); // 0=none,1=head,2=torso,3=lArm,4=rArm,5=lLeg,6=rLeg
+
+  var shoulderMidY = (joints.lShoulder.y + joints.rShoulder.y) / 2;
+  var torsoWidth = Math.abs(joints.rShoulder.x - joints.lShoulder.x);
+
+  for (var py=0; py<h; py++) {
+    for (var px=0; px<w; px++) {
+      var pidx = py*w+px;
+      if (d[pidx*4+3] <= 30) continue;
+
+      // HEAD: above neck line
+      if (py <= joints.neckY + charH*0.02) {
+        partMap[pidx] = 1;
+        continue;
+      }
+
+      // LEGS: below crotch
+      if (py >= joints.crotchY - charH*0.02) {
+        // Assign left/right based on which hip joint is closer
+        var dToLHip = Math.abs(px - joints.lHip.x);
+        var dToRHip = Math.abs(px - joints.rHip.x);
+        // Also use knee/ankle if available
+        if (joints.lKnee && joints.rKnee && py > joints.crotchY + charH*0.05) {
+          var interp = Math.min(1, (py - joints.crotchY) / (botY - joints.crotchY));
+          var lTarget = joints.lKnee.x * (1-interp) + (joints.lAnkle ? joints.lAnkle.x : joints.lKnee.x) * interp;
+          var rTarget = joints.rKnee.x * (1-interp) + (joints.rAnkle ? joints.rAnkle.x : joints.rKnee.x) * interp;
+          dToLHip = Math.abs(px - lTarget);
+          dToRHip = Math.abs(px - rTarget);
+        }
+        partMap[pidx] = dToLHip <= dToRHip ? 5 : 6;
+        continue;
+      }
+
+      // TORSO/ARM zone (neck to crotch)
+      // Core torso: between shoulder joints, narrowing at waist
+      var zoneT = (py - joints.neckY) / Math.max(1, joints.crotchY - joints.neckY);
+
+      // Interpolate torso boundaries from shoulders to hips
+      var tLeftX = joints.lShoulder.x + (joints.lHip.x - joints.lShoulder.x) * zoneT;
+      var tRightX = joints.rShoulder.x + (joints.rHip.x - joints.rShoulder.x) * zoneT;
+
+      // Narrow at waist (squeeze inward 15%)
+      var waistFactor = 1 - 0.15 * Math.sin(zoneT * Math.PI);
+      var tCx = (tLeftX + tRightX) / 2;
+      var tHalfW = (tRightX - tLeftX) / 2 * waistFactor;
+      tLeftX = tCx - tHalfW;
+      tRightX = tCx + tHalfW;
+
+      if (px >= tLeftX && px <= tRightX) {
+        partMap[pidx] = 2; // torso
+      } else if (px < tLeftX) {
+        // Left arm or extended torso?
+        // If very close to boundary, blend
+        partMap[pidx] = 3; // left arm
+      } else {
+        partMap[pidx] = 4; // right arm
       }
     }
-    rows.push({ left: left, right: right, width: left >= 0 ? right - left + 1 : 0, count: count, cx: left >= 0 ? (left + right) / 2 : w / 2 });
   }
 
-  // Find character bounding box
-  var topY = 0, botY = h - 1;
-  for (var y2 = 0; y2 < h; y2++) { if (rows[y2].width > 0) { topY = y2; break; } }
-  for (var y3 = h - 1; y3 >= 0; y3--) { if (rows[y3].width > 0) { botY = y3; break; } }
-  var charH = botY - topY + 1;
-  if (charH < 4) return null; // too small
+  // Extract part canvases with overlap at joints
+  var overlapPx = Math.max(3, Math.floor(charH * 0.035));
+  var partNames = ["head","torso","leftArm","rightArm","leftLeg","rightLeg"];
+  var partIds = [1,2,3,4,5,6];
 
-  // Smooth the width profile
-  var smoothW = [];
-  for (var i = 0; i < h; i++) {
-    var sum = 0, cnt = 0;
-    for (var j = Math.max(0, i - 2); j <= Math.min(h - 1, i + 2); j++) {
-      sum += rows[j].width; cnt++;
-    }
-    smoothW.push(sum / cnt);
-  }
+  var pivots = {
+    head: {x: joints.neckX, y: joints.neckY},
+    torso: {x: joints.neckX, y: (shoulderMidY + joints.crotchY)/2},
+    leftArm: {x: joints.lShoulder.x, y: joints.lShoulder.y},
+    rightArm: {x: joints.rShoulder.x, y: joints.rShoulder.y},
+    leftLeg: {x: joints.lHip.x, y: joints.crotchY},
+    rightLeg: {x: joints.rHip.x, y: joints.crotchY}
+  };
 
-  // Find key landmarks by scanning the profile
-  var maxWidth = 0, maxWidthY = topY;
-  for (var y4 = topY; y4 <= botY; y4++) {
-    if (smoothW[y4] > maxWidth) { maxWidth = smoothW[y4]; maxWidthY = y4; }
-  }
+  var parts = {};
+  for (var pi=0; pi<partNames.length; pi++) {
+    var name = partNames[pi];
+    var pid = partIds[pi];
+    var pc = document.createElement("canvas");
+    pc.width = w; pc.height = h;
+    var pctx = pc.getContext("2d");
+    var pd2 = pctx.createImageData(w, h);
+    var pdd = pd2.data;
 
-  // HEAD: from top until first significant narrowing (neck)
-  // Scan down from top, find where width first drops significantly after initial mass
-  var headMaxW = 0, headMaxY = topY;
-  var scanEnd = Math.min(topY + Math.floor(charH * 0.45), botY);
-  for (var y5 = topY; y5 < scanEnd; y5++) {
-    if (smoothW[y5] > headMaxW) { headMaxW = smoothW[y5]; headMaxY = y5; }
-  }
+    for (var py2=0; py2<h; py2++) {
+      for (var px2=0; px2<w; px2++) {
+        var pidx2 = py2*w+px2;
+        if (d[pidx2*4+3] <= 10) continue;
+        var si = pidx2*4;
+        var belongs = partMap[pidx2] === pid;
 
-  // Find neck: narrowest point between head peak and 45% down
-  var neckY = headMaxY, neckW = headMaxW;
-  var neckSearchEnd = Math.min(topY + Math.floor(charH * 0.4), botY);
-  for (var y6 = headMaxY + 1; y6 < neckSearchEnd; y6++) {
-    if (smoothW[y6] < neckW && smoothW[y6] > 0) {
-      neckW = smoothW[y6]; neckY = y6;
-    }
-    // Stop if width starts increasing significantly (found neck, now shoulders)
-    if (smoothW[y6] > neckW * 1.3 && y6 > headMaxY + 2) break;
-  }
-
-  // SHOULDERS: widest point in upper 35-55% of character
-  var shoulderY = neckY, shoulderW = 0;
-  var shStart = Math.max(neckY, topY + Math.floor(charH * 0.2));
-  var shEnd = Math.min(topY + Math.floor(charH * 0.5), botY);
-  for (var y7 = shStart; y7 < shEnd; y7++) {
-    if (smoothW[y7] > shoulderW) { shoulderW = smoothW[y7]; shoulderY = y7; }
-  }
-
-  // WAIST: narrowest point between shoulders and 70%
-  var waistY = shoulderY, waistW = shoulderW;
-  var waistEnd = Math.min(topY + Math.floor(charH * 0.7), botY);
-  for (var y8 = shoulderY + 1; y8 < waistEnd; y8++) {
-    if (smoothW[y8] < waistW && smoothW[y8] > 0) {
-      waistW = smoothW[y8]; waistY = y8;
-    }
-  }
-
-  // HIPS: widest point in 45-65% zone
-  var hipY = waistY, hipW = 0;
-  var hipStart = Math.max(waistY, topY + Math.floor(charH * 0.4));
-  var hipEnd = Math.min(topY + Math.floor(charH * 0.65), botY);
-  for (var y9 = hipStart; y9 < hipEnd; y9++) {
-    if (smoothW[y9] > hipW) { hipW = smoothW[y9]; hipY = y9; }
-  }
-
-  // LEG SPLIT: find where the silhouette splits into two masses
-  // Scan from hips down looking for a gap or significant dip in the center column
-  var centerX = Math.round(w / 2);
-  var splitY = hipY + Math.floor((botY - hipY) * 0.15); // default
-  for (var y10 = hipY; y10 < botY - 2; y10++) {
-    // Check if center region has a gap
-    var centerCount = 0;
-    var checkL = Math.max(0, centerX - Math.floor(w * 0.08));
-    var checkR = Math.min(w - 1, centerX + Math.floor(w * 0.08));
-    for (var x2 = checkL; x2 <= checkR; x2++) {
-      if (d[(y10 * w + x2) * 4 + 3] > 30) centerCount++;
-    }
-    var totalW = checkR - checkL + 1;
-    if (centerCount < totalW * 0.3 && y10 > hipY + 3) {
-      splitY = y10;
-      break;
-    }
-    // Also detect: left half and right half both have mass but center is thin
-    if (rows[y10].width > 0) {
-      var leftMass = 0, rightMass = 0;
-      var mid = Math.round(rows[y10].cx);
-      for (var x3 = rows[y10].left; x3 < mid; x3++) {
-        if (d[(y10 * w + x3) * 4 + 3] > 30) leftMass++;
-      }
-      for (var x4 = mid; x4 <= rows[y10].right; x4++) {
-        if (d[(y10 * w + x4) * 4 + 3] > 30) rightMass++;
-      }
-      if (leftMass > 2 && rightMass > 2 && centerCount < totalW * 0.5 && y10 > hipY + 3) {
-        splitY = y10;
-        break;
+        if (!belongs) {
+          // Check overlap zone
+          var nearOwn = false;
+          for (var dy=-overlapPx; dy<=overlapPx && !nearOwn; dy+=2) {
+            for (var dx=-overlapPx; dx<=overlapPx && !nearOwn; dx+=2) {
+              var ny=py2+dy, nx=px2+dx;
+              if (ny>=0&&ny<h&&nx>=0&&nx<w && partMap[ny*w+nx]===pid) {
+                if (Math.abs(dx)+Math.abs(dy) <= overlapPx*1.5) nearOwn=true;
+              }
+            }
+          }
+          if (nearOwn) {
+            pdd[si]=d[si]; pdd[si+1]=d[si+1]; pdd[si+2]=d[si+2];
+            pdd[si+3]=Math.round(d[si+3]*0.45);
+            continue;
+          }
+        }
+        if (belongs) {
+          pdd[si]=d[si]; pdd[si+1]=d[si+1]; pdd[si+2]=d[si+2]; pdd[si+3]=d[si+3];
+        }
       }
     }
+    pctx.putImageData(pd2, 0, 0);
+    var partImg = new Image();
+    partImg.src = pc.toDataURL();
+    partImg.width = w; partImg.height = h;
+    parts[name] = { img: partImg, pivot: pivots[name] };
   }
-
-  // Convert to fractions
-  var nf = function(v, max) { return Math.max(0, Math.min(1, v / max)); };
-  var headBot = nf(neckY + 2, h);
-  var torsoTop = nf(neckY - 2, h);
-  var shoulderFrac = nf(shoulderY, h);
-  var hipFrac = nf(hipY, h);
-  var splitFrac = nf(splitY, h);
-
-  // Arm horizontal bounds from silhouette at shoulder height
-  var shRow = rows[shoulderY] || rows[Math.round((topY + botY) * 0.35)];
-  var shLeft = shRow ? nf(shRow.left, w) : 0;
-  var shRight = shRow ? nf(shRow.right, w) : 1;
-  var shCx = shRow ? nf(shRow.cx, w) : 0.5;
-  var armSplit = 0.33; // arms are outer 33% each side
 
   return {
-    head: {
-      l: Math.max(0, shCx - 0.35), t: nf(topY, h),
-      r: Math.min(1, shCx + 0.35), b: headBot + 0.02,
-      px: shCx, py: headBot
-    },
-    torso: {
-      l: Math.max(0, shLeft - 0.02), t: torsoTop,
-      r: Math.min(1, shRight + 0.02), b: splitFrac + 0.03,
-      px: shCx, py: (shoulderFrac + hipFrac) / 2
-    },
-    leftArm: {
-      l: Math.max(0, shLeft - 0.03), t: torsoTop - 0.02,
-      r: Math.min(shCx - 0.05, shLeft + (shRight - shLeft) * armSplit),
-      b: splitFrac + 0.02,
-      px: shLeft + (shRight - shLeft) * 0.12, py: shoulderFrac
-    },
-    rightArm: {
-      l: Math.max(shCx + 0.05, shRight - (shRight - shLeft) * armSplit),
-      t: torsoTop - 0.02,
-      r: Math.min(1, shRight + 0.03), b: splitFrac + 0.02,
-      px: shRight - (shRight - shLeft) * 0.12, py: shoulderFrac
-    },
-    leftLeg: {
-      l: Math.max(0, shLeft - 0.02), t: splitFrac - 0.04,
-      r: shCx + 0.04, b: nf(botY + 1, h),
-      px: shCx - (shCx - shLeft) * 0.4, py: splitFrac
-    },
-    rightLeg: {
-      l: shCx - 0.04, t: splitFrac - 0.04,
-      r: Math.min(1, shRight + 0.02), b: nf(botY + 1, h),
-      px: shCx + (shRight - shCx) * 0.4, py: splitFrac
-    },
-    // Extra debug info
-    _landmarks: { topY: nf(topY,h), neckY: headBot, shoulderY: shoulderFrac, waistY: nf(waistY,h), hipY: hipFrac, splitY: splitFrac, botY: nf(botY,h) }
+    parts: parts, width: w, height: h, aiUsed: aiUsed,
+    landmarks: {
+      topY:topY/h, neckY:joints.neckY/h, shoulderY:shoulderMidY/h,
+      hipY:joints.crotchY/h, botY:botY/h,
+      lShoulder:{x:joints.lShoulder.x/w,y:joints.lShoulder.y/h},
+      rShoulder:{x:joints.rShoulder.x/w,y:joints.rShoulder.y/h}
+    }
   };
 }
 
@@ -200,69 +305,57 @@ function analyzeSilhouette(img) {
 // ============================================================
 // DRAWING ENGINE
 // ============================================================
-function drawPart(ctx, img, region, pivotX, pivotY, rot, ox, oy, alpha) {
+function drawPartImg(ctx, partData, imgW, imgH, size, rot, ox, oy, alpha) {
+  var img = partData.img;
+  var px = partData.pivot.x;
+  var py = partData.pivot.y;
+  var drawOx = (size - imgW) / 2;
+  var drawOy = (size - imgH) / 2;
+  var pivotX = drawOx + px + (ox||0);
+  var pivotY = drawOy + py + (oy||0);
   ctx.save();
-  if (alpha !== undefined) ctx.globalAlpha = alpha;
+  if (alpha !== undefined && alpha < 1) ctx.globalAlpha = alpha;
   ctx.translate(pivotX, pivotY);
   ctx.rotate(rot || 0);
   ctx.translate(-pivotX, -pivotY);
-  ctx.drawImage(img, region.sx, region.sy, region.sw, region.sh,
-    region.dx + (ox||0), region.dy + (oy||0), region.dw, region.dh);
+  ctx.drawImage(img, 0, 0, imgW, imgH, drawOx+(ox||0), drawOy+(oy||0), imgW, imgH);
   ctx.restore();
 }
 
-function getParts(img, size, bodyMap) {
-  var iw = img.width, ih = img.height;
-  var ox = (size - iw) / 2, oy = (size - ih) / 2;
-  var m = bodyMap || {
-    head:{l:0.15,t:0,r:0.85,b:0.28,px:0.5,py:0.28},
-    torso:{l:0.1,t:0.24,r:0.9,b:0.54,px:0.5,py:0.39},
-    leftArm:{l:0,t:0.2,r:0.3,b:0.55,px:0.22,py:0.22},
-    rightArm:{l:0.7,t:0.2,r:1,b:0.55,px:0.78,py:0.22},
-    leftLeg:{l:0,t:0.5,r:0.5,b:1,px:0.35,py:0.5},
-    rightLeg:{l:0.5,t:0.5,r:1,b:1,px:0.65,py:0.5}
-  };
-  var result = {};
-  ["head","torso","leftArm","rightArm","leftLeg","rightLeg"].forEach(function(n) {
-    var p = m[n];
-    result[n] = {
-      r: { sx:iw*p.l, sy:ih*p.t, sw:iw*(p.r-p.l), sh:ih*(p.b-p.t),
-           dx:ox+iw*p.l, dy:oy+ih*p.t, dw:iw*(p.r-p.l), dh:ih*(p.b-p.t) },
-      px: ox+iw*p.px, py: oy+ih*p.py
-    };
-  });
-  return result;
-}
-
-function drawChar(ctx, img, size, p, bodyMap) {
-  var bp = getParts(img, size, bodyMap);
-  var bx=(p.bx||0), by=(p.by||0), al=p.alpha!==undefined?p.alpha:1;
-  var order=["rightLeg","rightArm","torso","head","leftArm","leftLeg"];
+function drawAnimChar(ctx, bd, size, pose) {
+  if (!bd || !bd.parts) return;
+  var iw = bd.width, ih = bd.height;
+  var bx=pose.bx||0, by=pose.by||0;
+  var al = pose.alpha!==undefined ? pose.alpha : 1;
+  var order = ["rightLeg","rightArm","torso","head","leftArm","leftLeg"];
   order.forEach(function(name) {
-    var part=bp[name]; var pr=p[name]||{};
-    var tox=bx+(pr.ox||0), toy=by+(pr.oy||0);
-    if(name==="head"){var tr=p.torso||{}; tox+=(tr.ox||0)*0.4; toy+=(tr.oy||0)*0.4;}
-    drawPart(ctx,img,part.r,part.px+bx,part.py+by,pr.rot||0,tox,toy,al);
+    var part = bd.parts[name];
+    if (!part||!part.img) return;
+    var pr = pose[name] || {};
+    var ox = bx+(pr.ox||0), oy = by+(pr.oy||0);
+    if (name==="head"){var tr=pose.torso||{}; ox+=(tr.ox||0)*0.4; oy+=(tr.oy||0)*0.4;}
+    drawPartImg(ctx, part, iw, ih, size, pr.rot||0, ox, oy, al);
   });
 }
 
-function drawDust(ctx,x,y,n,s,a,sz){ctx.save();ctx.globalAlpha=a;ctx.fillStyle='#aaa';for(var i=0;i<n;i++){var an=(i/n)*Math.PI*2,d=s*(0.3+Math.random()*0.7);ctx.beginPath();ctx.arc(x+Math.cos(an)*d,y-Math.random()*s*0.3,sz*(0.5+Math.random()),0,Math.PI*2);ctx.fill();}ctx.restore();}
-function drawShadow(ctx,size){ctx.save();ctx.beginPath();ctx.ellipse(size/2,size*0.88,size*0.28,size*0.04,0,0,Math.PI*2);ctx.fillStyle="rgba(0,0,0,0.22)";ctx.fill();ctx.restore();}
-function drawSpark(ctx,x,y,r,a){ctx.save();ctx.globalAlpha=a;ctx.strokeStyle='#fff';ctx.lineWidth=2;for(var i=0;i<6;i++){var an=(i/6)*Math.PI*2;ctx.beginPath();ctx.moveTo(x+Math.cos(an)*r*0.25,y+Math.sin(an)*r*0.25);ctx.lineTo(x+Math.cos(an)*r,y+Math.sin(an)*r);ctx.stroke();}ctx.restore();}
-
+function drawCharFallback(ctx, img, size, pose) {
+  var iw=img.width,ih=img.height,ox=(size-iw)/2,oy=(size-ih)/2;
+  ctx.save();
+  if(pose.alpha!==undefined) ctx.globalAlpha=pose.alpha;
+  ctx.drawImage(img,0,0,iw,ih,ox+(pose.bx||0),oy+(pose.by||0),iw,ih);
+  ctx.restore();
 }
 
-function drawDust(ctx,x,y,n,s,a,sz){ctx.save();ctx.globalAlpha=a;ctx.fillStyle='#aaa';for(var i=0;i<n;i++){var an=(i/n)*Math.PI*2,d=s*(0.3+Math.random()*0.7);ctx.beginPath();ctx.arc(x+Math.cos(an)*d,y-Math.random()*s*0.3,sz*(0.5+Math.random()),0,Math.PI*2);ctx.fill();}ctx.restore();}
+function drawDust(ctx,x,y,n,s,a,sz){ctx.save();ctx.globalAlpha=a;ctx.fillStyle='#aaa';for(var i=0;i<n;i++){var an=(i/n)*Math.PI*2,d2=s*(0.3+Math.random()*0.7);ctx.beginPath();ctx.arc(x+Math.cos(an)*d2,y-Math.random()*s*0.3,sz*(0.5+Math.random()),0,Math.PI*2);ctx.fill();}ctx.restore();}
 function drawShadow(ctx,size){ctx.save();ctx.beginPath();ctx.ellipse(size/2,size*0.88,size*0.28,size*0.04,0,0,Math.PI*2);ctx.fillStyle="rgba(0,0,0,0.22)";ctx.fill();ctx.restore();}
 function drawSpark(ctx,x,y,r,a){ctx.save();ctx.globalAlpha=a;ctx.strokeStyle='#fff';ctx.lineWidth=2;for(var i=0;i<6;i++){var an=(i/6)*Math.PI*2;ctx.beginPath();ctx.moveTo(x+Math.cos(an)*r*0.25,y+Math.sin(an)*r*0.25);ctx.lineTo(x+Math.cos(an)*r,y+Math.sin(an)*r);ctx.stroke();}ctx.restore();}
+
 
 var ANIMATIONS = {
-  idle: { label:"Idle", desc:"Breathing & weight shift", generate: function(ctx,img,f,tot,sz,bm) {
+  idle: { label:"Idle", desc:"Breathing & weight shift", generate: function(ctx,img,f,tot,sz,bd) {
     var t=(f/tot)*Math.PI*2;
-    // Slow breathing cycle with subtle weight shift
-    var breathe=Math.sin(t);
-    var shift=Math.sin(t*0.5);
-    drawChar(ctx,img,sz,{
+    var breathe=Math.sin(t), shift=Math.sin(t*0.5);
+    var pose = {
       head:{rot:shift*0.02, oy:breathe*-1.5},
       torso:{rot:shift*0.015, oy:breathe*-1},
       leftArm:{rot:0.05+breathe*0.04+shift*0.03},
@@ -270,255 +363,90 @@ var ANIMATIONS = {
       leftLeg:{rot:shift*0.03},
       rightLeg:{rot:-shift*0.03},
       by:breathe*-1
-    },bm);
+    };
+    if(bd) drawAnimChar(ctx,bd,sz,pose); else drawCharFallback(ctx,img,sz,pose);
   }},
-  run: { label:"Run", desc:"Full sprint cycle", generate: function(ctx,img,f,tot,sz,bm) {
+  run: { label:"Run", desc:"Full sprint cycle", generate: function(ctx,img,f,tot,sz,bd) {
     var t=(f/tot)*Math.PI*2;
-    // Run has 4 key poses: contact, down, passing, up
-    // Bounce: high during flight, low at contact
-    var contactPhase=Math.cos(t*2); // double-bounce per stride
-    var bounce=(-Math.abs(Math.sin(t))*0.04 + (contactPhase>0.5?-0.015:0))*sz;
-    // Forward lean is constant in a run
-    var forwardLean=0.08;
-    // Leg swing: front/back with asymmetric timing (faster forward snap)
-    var legPhase=Math.sin(t);
-    var legForward=legPhase>0?Math.pow(legPhase,0.7):-(Math.pow(-legPhase,0.7));
-    // Arms oppose legs, elbows bent so less amplitude than legs
-    drawChar(ctx,img,sz,{
-      head:{rot:forwardLean*0.3+Math.sin(t*2)*0.02, oy:bounce*0.4},
-      torso:{rot:forwardLean+Math.sin(t)*0.06, oy:bounce*0.3},
-      leftArm:{rot:-legForward*0.85+forwardLean*0.5},
-      rightArm:{rot:legForward*0.85+forwardLean*0.5},
-      leftLeg:{rot:legForward*0.8},
-      rightLeg:{rot:-legForward*0.8},
+    var contactPhase=Math.cos(t*2);
+    var bounce=(-Math.abs(Math.sin(t))*0.04+(contactPhase>0.5?-0.015:0))*sz;
+    var lean=0.08;
+    var lp=Math.sin(t);
+    var lf=lp>0?Math.pow(lp,0.7):-Math.pow(-lp,0.7);
+    var pose = {
+      head:{rot:lean*0.3+Math.sin(t*2)*0.02, oy:bounce*0.4},
+      torso:{rot:lean+Math.sin(t)*0.06, oy:bounce*0.3},
+      leftArm:{rot:-lf*0.85+lean*0.5},
+      rightArm:{rot:lf*0.85+lean*0.5},
+      leftLeg:{rot:lf*0.8},
+      rightLeg:{rot:-lf*0.8},
       by:bounce
-    },bm);
-    // Dust on foot strike
-    var strike=Math.abs(Math.sin(t));
-    if(strike>0.92) drawDust(ctx,sz/2+Math.sin(t)*6,(sz+img.height)/2+bounce,5,sz*0.06,0.35,sz*0.01);
+    };
+    if(bd) drawAnimChar(ctx,bd,sz,pose); else drawCharFallback(ctx,img,sz,pose);
+    if(Math.abs(Math.sin(t))>0.92) drawDust(ctx,sz/2+Math.sin(t)*6,sz*0.88+bounce,5,sz*0.06,0.35,sz*0.01);
   }},
-  walk: { label:"Walk", desc:"Natural walking gait", generate: function(ctx,img,f,tot,sz,bm) {
+  walk: { label:"Walk", desc:"Natural walking gait", generate: function(ctx,img,f,tot,sz,bd) {
     var t=(f/tot)*Math.PI*2;
-    // Walk: one foot always on ground. Bounce peaks at midstance (leg straight under body)
     var bounce=Math.sin(t*2+Math.PI/2)*sz*0.012;
-    // Hip sway: lateral weight shift over planted foot
     var hipSway=Math.sin(t)*sz*0.008;
-    // Legs: moderate swing, front foot reaches, back foot pushes
-    var legSwing=Math.sin(t);
-    // Counter-rotation: shoulders twist opposite to hips
-    var twist=Math.sin(t)*0.04;
-    drawChar(ctx,img,sz,{
+    var ls=Math.sin(t), twist=Math.sin(t)*0.04;
+    var pose = {
       head:{rot:-twist*0.3, ox:-hipSway*0.3},
       torso:{rot:twist, ox:hipSway},
-      leftArm:{rot:-legSwing*0.35-0.05},
-      rightArm:{rot:legSwing*0.35+0.05},
-      leftLeg:{rot:legSwing*0.45},
-      rightLeg:{rot:-legSwing*0.45},
+      leftArm:{rot:-ls*0.35-0.05},
+      rightArm:{rot:ls*0.35+0.05},
+      leftLeg:{rot:ls*0.45},
+      rightLeg:{rot:-ls*0.45},
       by:bounce
-    },bm);
+    };
+    if(bd) drawAnimChar(ctx,bd,sz,pose); else drawCharFallback(ctx,img,sz,pose);
   }},
-  jump: { label:"Jump", desc:"Squat, launch, peak, land", generate: function(ctx,img,f,tot,sz,bm) {
+  jump: { label:"Jump", desc:"Squat, launch, peak, land", generate: function(ctx,img,f,tot,sz,bd) {
     var t=f/Math.max(tot-1,1);
-    // Smooth parabolic arc
     var arc=-Math.sin(t*Math.PI)*sz*0.24;
     var p={head:{},torso:{},leftArm:{},rightArm:{},leftLeg:{},rightLeg:{},by:arc};
-    if(t<0.18) {
-      // Anticipation: deep squat, arms swing back, lean forward
-      var q=t/0.18;
-      var ease=q*q; // accelerating into squat
-      p.torso={rot:ease*0.08, oy:ease*sz*0.03};
-      p.leftLeg={rot:ease*0.35};
-      p.rightLeg={rot:-ease*0.35};
-      p.leftArm={rot:ease*0.5}; // arms back
-      p.rightArm={rot:-ease*0.5};
-      p.head={rot:-ease*0.04};
-    } else if(t<0.35) {
-      // Launch: explosive extension, arms drive up
-      var q=(t-0.18)/0.17;
-      var ease=1-Math.pow(1-q,2); // decelerating extension
-      p.torso={rot:0.08*(1-ease)-ease*0.05, oy:0.03*sz*(1-ease)};
-      p.leftLeg={rot:0.35*(1-ease)-ease*0.2};
-      p.rightLeg={rot:-0.35*(1-ease)+ease*0.2};
-      p.leftArm={rot:0.5-ease*1.3}; // arms drive up
-      p.rightArm={rot:-0.5+ease*1.3};
-      p.head={rot:-0.04+ease*0.06};
-    } else if(t<0.65) {
-      // Air: arms up, legs tuck
-      var q=((t-0.35)/0.3);
-      var tuck=Math.sin(q*Math.PI);
-      p.leftArm={rot:-0.8-tuck*0.2};
-      p.rightArm={rot:0.8+tuck*0.2};
-      p.leftLeg={rot:tuck*0.5};
-      p.rightLeg={rot:tuck*0.5};
-      p.torso={rot:-0.05};
-      p.head={rot:0.02};
-    } else if(t<0.82) {
-      // Descend: extend legs, arms come down
-      var q=(t-0.65)/0.17;
-      p.leftLeg={rot:-q*0.2};
-      p.rightLeg={rot:q*0.2};
-      p.leftArm={rot:-0.8+q*0.5};
-      p.rightArm={rot:0.8-q*0.5};
-      p.head={rot:q*0.04};
-    } else {
-      // Land: absorb with deep squat
-      var q=(t-0.82)/0.18;
-      var impact=Math.sin(q*Math.PI*0.5);
-      p.torso={rot:impact*0.1, oy:impact*sz*0.03};
-      p.leftLeg={rot:impact*0.4};
-      p.rightLeg={rot:-impact*0.4};
-      p.leftArm={rot:impact*0.3};
-      p.rightArm={rot:-impact*0.3};
-      p.head={rot:-impact*0.05};
-    }
-    drawChar(ctx,img,sz,p,bm);
-    if(t>0.85){var q=(t-0.85)/0.15; drawDust(ctx,sz/2,(sz+img.height)/2+arc,4+Math.floor(q*6),sz*0.1*q,0.35*q,sz*0.012);}
+    if(t<0.18){var q=t/0.18,e=q*q; p.torso={rot:e*0.08,oy:e*sz*0.03}; p.leftLeg={rot:e*0.35}; p.rightLeg={rot:-e*0.35}; p.leftArm={rot:e*0.5}; p.rightArm={rot:-e*0.5}; p.head={rot:-e*0.04};}
+    else if(t<0.35){var q=(t-0.18)/0.17,e=1-Math.pow(1-q,2); p.torso={rot:0.08*(1-e)-e*0.05,oy:0.03*sz*(1-e)}; p.leftLeg={rot:0.35*(1-e)-e*0.2}; p.rightLeg={rot:-0.35*(1-e)+e*0.2}; p.leftArm={rot:0.5-e*1.3}; p.rightArm={rot:-0.5+e*1.3}; p.head={rot:-0.04+e*0.06};}
+    else if(t<0.65){var q=(t-0.35)/0.3,tk=Math.sin(q*Math.PI); p.leftArm={rot:-0.8-tk*0.2}; p.rightArm={rot:0.8+tk*0.2}; p.leftLeg={rot:tk*0.5}; p.rightLeg={rot:tk*0.5}; p.torso={rot:-0.05}; p.head={rot:0.02};}
+    else if(t<0.82){var q=(t-0.65)/0.17; p.leftLeg={rot:-q*0.2}; p.rightLeg={rot:q*0.2}; p.leftArm={rot:-0.8+q*0.5}; p.rightArm={rot:0.8-q*0.5}; p.head={rot:q*0.04};}
+    else{var q=(t-0.82)/0.18,imp=Math.sin(q*Math.PI*0.5); p.torso={rot:imp*0.1,oy:imp*sz*0.03}; p.leftLeg={rot:imp*0.4}; p.rightLeg={rot:-imp*0.4}; p.leftArm={rot:imp*0.3}; p.rightArm={rot:-imp*0.3}; p.head={rot:-imp*0.05};}
+    if(bd) drawAnimChar(ctx,bd,sz,p); else drawCharFallback(ctx,img,sz,p);
+    if(t>0.85){var q2=(t-0.85)/0.15; drawDust(ctx,sz/2,sz*0.88+arc,4+Math.floor(q2*6),sz*0.1*q2,0.35*q2,sz*0.012);}
   }},
-  attack: { label:"Attack", desc:"Slash with full body", generate: function(ctx,img,f,tot,sz,bm) {
+  attack: { label:"Attack", desc:"Slash with full body", generate: function(ctx,img,f,tot,sz,bd) {
     var t=f/Math.max(tot-1,1);
     var p={head:{},torso:{},leftArm:{},rightArm:{},leftLeg:{},rightLeg:{}};
-    if(t<0.3) {
-      // Wind-up: coil back, shift weight to back foot
-      var q=t/0.3;
-      var ease=1-Math.pow(1-q,2);
-      p.torso={rot:-ease*0.18, ox:-ease*sz*0.02};
-      p.rightArm={rot:-ease*1.5}; // arm cocked way back
-      p.leftArm={rot:ease*0.4}; // guard arm forward
-      p.rightLeg={rot:-ease*0.2}; // weight back
-      p.leftLeg={rot:ease*0.15};
-      p.head={rot:-ease*0.08};
-    } else if(t<0.45) {
-      // Strike: explosive forward rotation
-      var q=(t-0.3)/0.15;
-      var ease=q*q*q; // sharp acceleration
-      p.torso={rot:-0.18+ease*0.42, ox:-0.02*sz+ease*sz*0.06};
-      p.rightArm={rot:-1.5+ease*3.0}; // huge swing
-      p.leftArm={rot:0.4-ease*0.6};
-      p.rightLeg={rot:-0.2+ease*0.35};
-      p.leftLeg={rot:0.15-ease*0.1};
-      p.head={rot:-0.08+ease*0.18};
-    } else if(t<0.55) {
-      // Follow-through: overextend
-      var q=(t-0.45)/0.1;
-      p.torso={rot:0.24+q*0.04, ox:sz*0.04};
-      p.rightArm={rot:1.5+q*0.2}; // past peak
-      p.leftArm={rot:-0.2-q*0.1};
-      p.rightLeg={rot:0.15};
-      p.leftLeg={rot:0.05};
-      p.head={rot:0.1+q*0.02};
-      // Impact shake
-      var sh=Math.sin(q*Math.PI*6)*0.02;
-      p.torso.rot+=sh; p.head.rot+=sh;
-    } else {
-      // Recovery: settle back
-      var q=(t-0.55)/0.45;
-      var ease=1-Math.pow(1-q,3);
-      p.torso={rot:0.28*(1-ease)};
-      p.rightArm={rot:1.7*(1-ease)};
-      p.leftArm={rot:-0.3*(1-ease)};
-      p.rightLeg={rot:0.15*(1-ease)};
-      p.leftLeg={rot:0.05*(1-ease)};
-      p.head={rot:0.12*(1-ease)};
-    }
-    drawChar(ctx,img,sz,p,bm);
-    if(t>0.42&&t<0.6){var q=1-Math.abs(t-0.48)/0.12; if(q>0) drawSpark(ctx,(sz+img.width)/2+sz*0.06,(sz-img.height)/2+img.height*0.28,sz*0.12*q,0.9*q);}
+    if(t<0.3){var q=t/0.3,e=1-Math.pow(1-q,2); p.torso={rot:-e*0.18,ox:-e*sz*0.02}; p.rightArm={rot:-e*1.5}; p.leftArm={rot:e*0.4}; p.rightLeg={rot:-e*0.2}; p.leftLeg={rot:e*0.15}; p.head={rot:-e*0.08};}
+    else if(t<0.45){var q=(t-0.3)/0.15,e=q*q*q; p.torso={rot:-0.18+e*0.42,ox:-0.02*sz+e*sz*0.06}; p.rightArm={rot:-1.5+e*3.0}; p.leftArm={rot:0.4-e*0.6}; p.rightLeg={rot:-0.2+e*0.35}; p.leftLeg={rot:0.15-e*0.1}; p.head={rot:-0.08+e*0.18};}
+    else if(t<0.55){var q=(t-0.45)/0.1; p.torso={rot:0.24+q*0.04,ox:sz*0.04}; p.rightArm={rot:1.5+q*0.2}; p.leftArm={rot:-0.2-q*0.1}; p.rightLeg={rot:0.15}; p.leftLeg={rot:0.05}; p.head={rot:0.1+q*0.02}; var sh=Math.sin(q*Math.PI*6)*0.02; p.torso.rot+=sh; p.head.rot+=sh;}
+    else{var q=(t-0.55)/0.45,e=1-Math.pow(1-q,3); p.torso={rot:0.28*(1-e)}; p.rightArm={rot:1.7*(1-e)}; p.leftArm={rot:-0.3*(1-e)}; p.rightLeg={rot:0.15*(1-e)}; p.leftLeg={rot:0.05*(1-e)}; p.head={rot:0.12*(1-e)};}
+    if(bd) drawAnimChar(ctx,bd,sz,p); else drawCharFallback(ctx,img,sz,p);
+    if(t>0.42&&t<0.6){var q3=1-Math.abs(t-0.48)/0.12; if(q3>0) drawSpark(ctx,sz*0.85,sz*0.3,sz*0.12*q3,0.9*q3);}
   }},
-  death: { label:"Death", desc:"Collapse to ground", generate: function(ctx,img,f,tot,sz,bm) {
+  death: { label:"Death", desc:"Collapse to ground", generate: function(ctx,img,f,tot,sz,bd) {
     var t=f/Math.max(tot-1,1);
-    // Phase 1: initial hit reaction (0-0.15)
-    // Phase 2: knees buckle (0.15-0.4)
-    // Phase 3: upper body follows, fall sideways (0.4-0.8)
-    // Phase 4: settle on ground (0.8-1)
     var p={head:{},torso:{},leftArm:{},rightArm:{},leftLeg:{},rightLeg:{},by:0,alpha:1};
-    if(t<0.15) {
-      var q=t/0.15;
-      p.head={rot:-q*0.1};
-      p.torso={rot:-q*0.06};
-      p.leftArm={rot:q*0.3};
-      p.rightArm={rot:-q*0.4};
-    } else if(t<0.4) {
-      var q=(t-0.15)/0.25;
-      var ease=q*q;
-      p.leftLeg={rot:ease*0.6};
-      p.rightLeg={rot:-ease*0.5};
-      p.torso={rot:-0.06+ease*0.15};
-      p.head={rot:-0.1+ease*0.05};
-      p.leftArm={rot:0.3+ease*0.4};
-      p.rightArm={rot:-0.4-ease*0.2};
-      p.by=ease*sz*0.04;
-    } else if(t<0.8) {
-      var q=(t-0.4)/0.4;
-      var ease=1-Math.pow(1-q,2);
-      p.torso={rot:0.09+ease*0.7, ox:ease*sz*0.1};
-      p.head={rot:-0.05+ease*0.9, ox:ease*sz*0.12};
-      p.leftLeg={rot:0.6+ease*0.3};
-      p.rightLeg={rot:-0.5+ease*0.2};
-      p.leftArm={rot:0.7+ease*0.8+Math.sin(q*6)*0.08};
-      p.rightArm={rot:-0.6-ease*0.3};
-      p.by=sz*0.04+ease*sz*0.08;
-      p.alpha=1-ease*0.3;
-    } else {
-      var q=(t-0.8)/0.2;
-      p.torso={rot:0.79+q*0.05, ox:sz*0.1};
-      p.head={rot:0.85+q*0.03, ox:sz*0.12};
-      p.leftLeg={rot:0.9};
-      p.rightLeg={rot:-0.3};
-      p.leftArm={rot:1.5};
-      p.rightArm={rot:-0.9};
-      p.by=sz*0.12;
-      p.alpha=0.7-q*0.35;
-    }
-    drawChar(ctx,img,sz,p,bm);
-    if(t>0.35) drawDust(ctx,sz/2+(t-0.35)*sz*0.15,(sz+img.height)/2+p.by,3+Math.floor(t*5),sz*0.07*t,0.2,sz*0.01);
+    if(t<0.15){var q=t/0.15; p.head={rot:-q*0.1}; p.torso={rot:-q*0.06}; p.leftArm={rot:q*0.3}; p.rightArm={rot:-q*0.4};}
+    else if(t<0.4){var q=(t-0.15)/0.25,e=q*q; p.leftLeg={rot:e*0.6}; p.rightLeg={rot:-e*0.5}; p.torso={rot:-0.06+e*0.15}; p.head={rot:-0.1+e*0.05}; p.leftArm={rot:0.3+e*0.4}; p.rightArm={rot:-0.4-e*0.2}; p.by=e*sz*0.04;}
+    else if(t<0.8){var q=(t-0.4)/0.4,e=1-Math.pow(1-q,2); p.torso={rot:0.09+e*0.7,ox:e*sz*0.1}; p.head={rot:-0.05+e*0.9,ox:e*sz*0.12}; p.leftLeg={rot:0.6+e*0.3}; p.rightLeg={rot:-0.5+e*0.2}; p.leftArm={rot:0.7+e*0.8+Math.sin(q*6)*0.08}; p.rightArm={rot:-0.6-e*0.3}; p.by=sz*0.04+e*sz*0.08; p.alpha=1-e*0.3;}
+    else{var q=(t-0.8)/0.2; p.torso={rot:0.79+q*0.05,ox:sz*0.1}; p.head={rot:0.85+q*0.03,ox:sz*0.12}; p.leftLeg={rot:0.9}; p.rightLeg={rot:-0.3}; p.leftArm={rot:1.5}; p.rightArm={rot:-0.9}; p.by=sz*0.12; p.alpha=0.7-q*0.35;}
+    if(bd) drawAnimChar(ctx,bd,sz,p); else drawCharFallback(ctx,img,sz,p);
+    if(t>0.35) drawDust(ctx,sz/2+(t-0.35)*sz*0.15,sz*0.88+p.by,3+Math.floor(t*5),sz*0.07*t,0.2,sz*0.01);
   }},
-  hit: { label:"Hit/Hurt", desc:"Impact & stagger", generate: function(ctx,img,f,tot,sz,bm) {
+  hit: { label:"Hit/Hurt", desc:"Impact & stagger", generate: function(ctx,img,f,tot,sz,bd) {
     var t=f/Math.max(tot-1,1);
     var p={head:{},torso:{},leftArm:{},rightArm:{},leftLeg:{},rightLeg:{},bx:0};
-    if(t<0.12) {
-      // Initial impact: sharp backward snap
-      var q=t/0.12;
-      var snap=q*q;
-      p.head={rot:-snap*0.25, ox:-snap*sz*0.04};
-      p.torso={rot:-snap*0.15, ox:-snap*sz*0.03};
-      p.leftArm={rot:snap*0.7};
-      p.rightArm={rot:-snap*0.8};
-      p.leftLeg={rot:-snap*0.12};
-      p.rightLeg={rot:snap*0.1};
-      p.bx=-snap*sz*0.05;
-    } else if(t<0.35) {
-      // Hold recoil + shake
-      var q=(t-0.12)/0.23;
-      var shake=Math.sin(q*Math.PI*5)*sz*0.02*(1-q);
-      p.head={rot:-0.25+q*0.1, ox:-sz*0.04+q*sz*0.015+shake};
-      p.torso={rot:-0.15+q*0.06, ox:-sz*0.03+q*sz*0.01+shake*0.7};
-      p.leftArm={rot:0.7-q*0.2};
-      p.rightArm={rot:-0.8+q*0.25};
-      p.leftLeg={rot:-0.12+q*0.05};
-      p.rightLeg={rot:0.1-q*0.04};
-      p.bx=-sz*0.05+q*sz*0.02+shake;
-    } else {
-      // Recovery: return to neutral with slight overshoot
-      var q=(t-0.35)/0.65;
-      var ease=1-Math.pow(1-q,2);
-      var overshoot=Math.sin(q*Math.PI)*0.04;
-      p.head={rot:(-0.15+overshoot)*(1-ease)};
-      p.torso={rot:(-0.09+overshoot)*(1-ease)};
-      p.leftArm={rot:0.5*(1-ease)};
-      p.rightArm={rot:-0.55*(1-ease)};
-      p.leftLeg={rot:-0.07*(1-ease)};
-      p.rightLeg={rot:0.06*(1-ease)};
-      p.bx=-sz*0.03*(1-ease);
-    }
-    drawChar(ctx,img,sz,p,bm);
-    // Flash on character only
-    if(t<0.15){var a=(1-t/0.15); ctx.save();ctx.globalAlpha=a*0.55;ctx.globalCompositeOperation='source-atop';ctx.fillStyle='#fff';ctx.fillRect(0,0,sz,sz);ctx.restore(); drawSpark(ctx,(sz-img.width)/2+img.width*0.3,(sz-img.height)/2+img.height*0.2,sz*0.1,0.85*a);}
+    if(t<0.12){var q=t/0.12,sn=q*q; p.head={rot:-sn*0.25,ox:-sn*sz*0.04}; p.torso={rot:-sn*0.15,ox:-sn*sz*0.03}; p.leftArm={rot:sn*0.7}; p.rightArm={rot:-sn*0.8}; p.leftLeg={rot:-sn*0.12}; p.rightLeg={rot:sn*0.1}; p.bx=-sn*sz*0.05;}
+    else if(t<0.35){var q=(t-0.12)/0.23,sh=Math.sin(q*Math.PI*5)*sz*0.02*(1-q); p.head={rot:-0.25+q*0.1,ox:-sz*0.04+q*sz*0.015+sh}; p.torso={rot:-0.15+q*0.06,ox:-sz*0.03+q*sz*0.01+sh*0.7}; p.leftArm={rot:0.7-q*0.2}; p.rightArm={rot:-0.8+q*0.25}; p.leftLeg={rot:-0.12+q*0.05}; p.rightLeg={rot:0.1-q*0.04}; p.bx=-sz*0.05+q*sz*0.02+sh;}
+    else{var q=(t-0.35)/0.65,e=1-Math.pow(1-q,2),ov=Math.sin(q*Math.PI)*0.04; p.head={rot:(-0.15+ov)*(1-e)}; p.torso={rot:(-0.09+ov)*(1-e)}; p.leftArm={rot:0.5*(1-e)}; p.rightArm={rot:-0.55*(1-e)}; p.leftLeg={rot:-0.07*(1-e)}; p.rightLeg={rot:0.06*(1-e)}; p.bx=-sz*0.03*(1-e);}
+    if(bd) drawAnimChar(ctx,bd,sz,p); else drawCharFallback(ctx,img,sz,p);
+    if(t<0.15){var a=(1-t/0.15); ctx.save();ctx.globalAlpha=a*0.55;ctx.globalCompositeOperation='source-atop';ctx.fillStyle='#fff';ctx.fillRect(0,0,sz,sz);ctx.restore(); drawSpark(ctx,sz*0.35,sz*0.25,sz*0.1,0.85*a);}
   }},
-  spin: { label:"Spin", desc:"Full 360 rotation", generate: function(ctx,img,f,tot,sz,bm) {
+  spin: { label:"Spin", desc:"Full 360 rotation", generate: function(ctx,img,f,tot,sz,bd) {
     var t=(f/tot)*Math.PI*2;
     var scaleX=Math.cos(t);
     var iw=img.width, ih=img.height;
     var dy=(sz-ih)/2;
-    // Slight vertical bob during spin
     var bob=Math.sin(t*2)*sz*0.01;
     ctx.save();
     ctx.translate(sz/2,sz/2+bob);
@@ -530,80 +458,6 @@ var ANIMATIONS = {
   }}
 };
 
-var SIZES=[32,64,128,256,512];
-var FRAME_OPTIONS=[2,3,4,6,8,10,12,16];
-function getPingPong(fi,tf){var uc=Math.ceil((tf+1)/2);return{frame:fi<uc?fi:tf-fi,total:uc};}
-
-
-// FLOOD-FILL BACKGROUND REMOVAL from edges
-function removeBackground(img, tolerance) {
-  var c = document.createElement("canvas");
-  c.width = img.width; c.height = img.height;
-  var ctx = c.getContext("2d");
-  ctx.drawImage(img, 0, 0);
-  var id = ctx.getImageData(0, 0, c.width, c.height);
-  var d = id.data;
-  var w = c.width, h = c.height;
-  var tol = tolerance || 30;
-  var visited = new Uint8Array(w * h);
-
-  // Get background color samples from corners
-  function getPixel(x, y) { var i = (y * w + x) * 4; return [d[i], d[i+1], d[i+2], d[i+3]]; }
-  function colorDist(a, b) { return Math.abs(a[0]-b[0]) + Math.abs(a[1]-b[1]) + Math.abs(a[2]-b[2]); }
-
-  // Sample multiple corner pixels to get reliable bg color
-  var samples = [];
-  var margin = Math.max(1, Math.floor(Math.min(w, h) * 0.02));
-  for (var sy = 0; sy < margin; sy++) {
-    for (var sx = 0; sx < margin; sx++) {
-      samples.push(getPixel(sx, sy));
-      samples.push(getPixel(w - 1 - sx, sy));
-      samples.push(getPixel(sx, h - 1 - sy));
-      samples.push(getPixel(w - 1 - sx, h - 1 - sy));
-    }
-  }
-  // Average bg color
-  var bg = [0,0,0];
-  samples.forEach(function(s) { bg[0] += s[0]; bg[1] += s[1]; bg[2] += s[2]; });
-  bg[0] = Math.round(bg[0] / samples.length);
-  bg[1] = Math.round(bg[1] / samples.length);
-  bg[2] = Math.round(bg[2] / samples.length);
-
-  // Flood fill from all edges
-  var queue = [];
-  for (var x = 0; x < w; x++) { queue.push(x); queue.push(0); queue.push(x); queue.push(h-1); }
-  for (var y = 0; y < h; y++) { queue.push(0); queue.push(y); queue.push(w-1); queue.push(y); }
-
-  var qi = 0;
-  while (qi < queue.length) {
-    var px = queue[qi++], py = queue[qi++];
-    if (px < 0 || px >= w || py < 0 || py >= h) continue;
-    var idx = py * w + px;
-    if (visited[idx]) continue;
-    var pix = getPixel(px, py);
-    if (colorDist(pix, bg) > tol && pix[3] > 10) continue;
-    visited[idx] = 1;
-    var pi = idx * 4;
-    d[pi + 3] = 0; // set alpha to 0
-    queue.push(px-1); queue.push(py);
-    queue.push(px+1); queue.push(py);
-    queue.push(px); queue.push(py-1);
-    queue.push(px); queue.push(py+1);
-  }
-
-  // Soften edges: semi-transparent border pixels
-  for (var y2 = 1; y2 < h-1; y2++) {
-    for (var x2 = 1; x2 < w-1; x2++) {
-      var ci = y2 * w + x2;
-      if (visited[ci]) continue;
-      var neighbors = 0;
-      if (visited[ci-1]) neighbors++;
-      if (visited[ci+1]) neighbors++;
-      if (visited[ci-w]) neighbors++;
-      if (visited[ci+w]) neighbors++;
-      if (neighbors > 0 && neighbors < 4) {
-        d[ci * 4 + 3] = Math.round(d[ci * 4 + 3] * (1 - neighbors * 0.2));
-      }
 function removeBackground(img, tolerance) {
   var c = document.createElement("canvas");
   c.width = img.width; c.height = img.height;
@@ -704,23 +558,23 @@ function App(){
   var _rbg=useState(false),removeBg=_rbg[0],setRemoveBg=_rbg[1];
   var _tol=useState(35),bgTolerance=_tol[0],setBgTolerance=_tol[1];
   var _rming=useState(false),removing=_rming[0],setRemoving=_rming[1];
-  var _bmap=useState(null),bodyMap=_bmap[0],setBodyMap=_bmap[1];
+  var _bd=useState(null),bodyData=_bd[0],setBodyData=_bd[1];
+  var _status=useState(""),aiStatus=_status[0],setAiStatus=_status[1];
   var fileInputRef=useRef(null);
 
   var handleUpload=useCallback(function(e){
     var file=(e.target.files||[])[0]; if(!file)return;
     var url=URL.createObjectURL(file); setImage(url);
-    var img=new Image(); img.onload=function(){setBodyMap(null); setRawImg(img); setImgEl(img);}; img.src=url;
+    var img=new Image(); img.onload=function(){setBodyData(null); setRawImg(img); setImgEl(img);}; img.src=url;
   },[]);
   var handleDrop=useCallback(function(e){
     e.preventDefault(); var file=(e.dataTransfer.files||[])[0];
     if(!file||!file.type.startsWith("image/"))return;
     var url=URL.createObjectURL(file); setImage(url);
-    var img=new Image(); img.onload=function(){setBodyMap(null); setRawImg(img); setImgEl(img);}; img.src=url;
+    var img=new Image(); img.onload=function(){setBodyData(null); setRawImg(img); setImgEl(img);}; img.src=url;
   },[]);
   var toggleAnim=function(key){setSelectedAnims([key]);};
 
-  // BG removal
   useEffect(function(){
     if(!rawImg) return;
     if(!removeBg){setImgEl(rawImg); return;}
@@ -728,69 +582,103 @@ function App(){
     setTimeout(function(){
       try{
         var result=removeBackground(rawImg, bgTolerance);
-        var waitLoad=function(){
-          if(result.complete&&result.naturalWidth>0){setImgEl(result);setRemoving(false);}
-          else{result.onload=function(){setImgEl(result);setRemoving(false);};}
-        };
-        waitLoad();
-      }catch(e){console.error("BG removal error:",e);setImgEl(rawImg);setRemoving(false);}
+        if(result.complete&&result.naturalWidth>0){setImgEl(result);setRemoving(false);}
+        else{result.onload=function(){setImgEl(result);setRemoving(false);};}
+      }catch(e){setImgEl(rawImg);setRemoving(false);}
     },50);
   },[rawImg,removeBg,bgTolerance]);
 
-  // SILHOUETTE ANALYSIS — runs on every new image or after bg removal
   useEffect(function(){
-    if(!imgEl) { setBodyMap(null); return; }
-    try {
-      var map = analyzeSilhouette(imgEl);
-      if (map) {
-        console.log("Silhouette body map:", map);
-        setBodyMap(map);
-      } else {
-        setBodyMap(null);
-      }
-    } catch(e) { console.warn("Silhouette analysis failed:", e); setBodyMap(null); }
+    if(!imgEl) { setBodyData(null); setAiStatus(""); return; }
+    var cancelled = false;
+    async function run() {
+      setAiStatus("Loading AI model...");
+      try {
+        var poseResult = null;
+        try {
+          poseResult = await detectPose(imgEl);
+          if (!cancelled) {
+            if (poseResult && poseResult.avgScore > 0.15) {
+              setAiStatus("AI pose detected (" + Math.round(poseResult.avgScore*100) + "% conf)");
+            } else {
+              setAiStatus("Low confidence, using heuristics");
+              poseResult = null;
+            }
+          }
+        } catch(e) {
+          if (!cancelled) setAiStatus("AI unavailable, using heuristics");
+        }
+        if (cancelled) return;
+        setAiStatus(function(s){return s + " \u2192 Extracting..."});
+        setTimeout(function(){
+          if (cancelled) return;
+          try {
+            var bd = extractBodyParts(imgEl, poseResult);
+            if (bd) {
+              var names = Object.keys(bd.parts);
+              var loaded = 0;
+              names.forEach(function(name) {
+                var pi = bd.parts[name].img;
+                var check = function(){ loaded++; if(loaded===names.length && !cancelled){ setBodyData(bd); setAiStatus(bd.aiUsed ? "\u2713 AI skeleton + 6 parts" : "\u2713 Heuristic + 6 parts"); } };
+                if(pi.complete) check(); else pi.onload=check;
+              });
+            } else { setBodyData(null); setAiStatus("Extraction failed"); }
+          } catch(e) { setBodyData(null); setAiStatus("Error"); }
+        }, 50);
+      } catch(e) { if (!cancelled) { setBodyData(null); setAiStatus("Error"); } }
+    }
+    run();
+    return function(){ cancelled = true; };
   },[imgEl]);
 
-  var fitImage=useCallback(function(img,targetSize){
-    var scale=(targetSize*0.75)/Math.max(img.width,img.height);
-    var c=document.createElement("canvas");
-    c.width=Math.round(img.width*scale); c.height=Math.round(img.height*scale);
-    var cx=c.getContext("2d"); cx.imageSmoothingEnabled=charSize>64;
-    cx.drawImage(img,0,0,c.width,c.height);
-    var fitted=new Image(); fitted.src=c.toDataURL(); fitted.width=c.width; fitted.height=c.height;
-    return fitted;
+  var fitImage=useCallback(function(img,ts){
+    var sc=(ts*0.75)/Math.max(img.width,img.height);
+    var c=document.createElement("canvas"); c.width=Math.round(img.width*sc); c.height=Math.round(img.height*sc);
+    var cx=c.getContext("2d"); cx.imageSmoothingEnabled=charSize>64; cx.drawImage(img,0,0,c.width,c.height);
+    var f=new Image(); f.src=c.toDataURL(); f.width=c.width; f.height=c.height; return f;
   },[charSize]);
 
-  // AUTO-GENERATE
+  var fitBodyData=useCallback(function(bd,ts){
+    if(!bd) return null;
+    var sc=(ts*0.75)/Math.max(bd.width,bd.height);
+    var nw=Math.round(bd.width*sc),nh=Math.round(bd.height*sc);
+    var np={};
+    Object.keys(bd.parts).forEach(function(name){
+      var p=bd.parts[name]; var pc=document.createElement("canvas"); pc.width=nw; pc.height=nh;
+      var px=pc.getContext("2d"); px.imageSmoothingEnabled=charSize>64; px.drawImage(p.img,0,0,bd.width,bd.height,0,0,nw,nh);
+      var ni=new Image(); ni.src=pc.toDataURL(); ni.width=nw; ni.height=nh;
+      np[name]={img:ni,pivot:{x:p.pivot.x*sc,y:p.pivot.y*sc}};
+    });
+    return {parts:np,width:nw,height:nh,landmarks:bd.landmarks,aiUsed:bd.aiUsed};
+  },[charSize]);
+
   useEffect(function(){
     if(!imgEl||selectedAnims.length===0){setSpriteSheet(null);return;}
-    var fitted=fitImage(imgEl,charSize);
+    var fitted=fitImage(imgEl,charSize); var fBD=fitBodyData(bodyData,charSize);
     var doGen=function(){
+      if(fBD){var ok=Object.keys(fBD.parts).every(function(n){return fBD.parts[n].img.complete;});if(!ok){setTimeout(doGen,50);return;}}
       try{
-        var cellSize=charSize+padding*2;
-        var canvas=document.createElement("canvas");
-        canvas.width=frameCount*cellSize; canvas.height=selectedAnims.length*cellSize;
-        var ctx=canvas.getContext("2d"); ctx.imageSmoothingEnabled=charSize>64;
-        selectedAnims.forEach(function(animKey,row){
-          var anim=ANIMATIONS[animKey]; if(!anim)return;
+        var cs=charSize+padding*2; var cv=document.createElement("canvas");
+        cv.width=frameCount*cs; cv.height=selectedAnims.length*cs;
+        var ctx=cv.getContext("2d"); ctx.imageSmoothingEnabled=charSize>64;
+        selectedAnims.forEach(function(ak,row){
+          var anim=ANIMATIONS[ak]; if(!anim)return;
           for(var f=0;f<frameCount;f++){
-            var oc=document.createElement("canvas"); oc.width=cellSize; oc.height=cellSize;
-            var octx=oc.getContext("2d"); octx.imageSmoothingEnabled=charSize>64;
-            octx.save(); octx.translate(padding,padding);
-            if(addShadow) drawShadow(octx,charSize);
+            var oc=document.createElement("canvas"); oc.width=cs; oc.height=cs;
+            var ox=oc.getContext("2d"); ox.imageSmoothingEnabled=charSize>64;
+            ox.save(); ox.translate(padding,padding);
+            if(addShadow) drawShadow(ox,charSize);
             var m=getPingPong(f,frameCount);
-            anim.generate(octx,fitted,m.frame,m.total,charSize,bodyMap);
-            octx.restore();
-            ctx.drawImage(oc,f*cellSize,row*cellSize);
+            anim.generate(ox,fitted,m.frame,m.total,charSize,fBD);
+            ox.restore(); ctx.drawImage(oc,f*cs,row*cs);
           }
         });
-        setSpriteSheet(canvas.toDataURL("image/png"));
-        setPreviewAnim(function(prev){return selectedAnims.includes(prev)?prev:selectedAnims[0];});
-        setPreviewFrame(0);
-      }catch(e){console.error("Gen error:",e);}
+        setSpriteSheet(cv.toDataURL("image/png"));
+        setPreviewAnim(function(p){return selectedAnims.includes(p)?p:selectedAnims[0];}); setPreviewFrame(0);
+      }catch(e){console.error("Gen:",e);}
     };
     if(fitted.complete) doGen(); else fitted.onload=doGen;
-  },[imgEl,selectedAnims,frameCount,charSize,addShadow,padding,fitImage,bodyMap]);
+  },[imgEl,selectedAnims,frameCount,charSize,addShadow,padding,fitImage,fitBodyData,bodyData]);
 
   useEffect(function(){
     if(!spriteSheet||!previewAnim||!playing)return;
@@ -813,71 +701,32 @@ function App(){
   },[spriteSheet,previewFrame,previewAnim,charSize,padding,selectedAnims]);
 
   var pingPong=(function(){var s=[];for(var i=0;i<frameCount;i++){s.push(getPingPong(i,frameCount).frame+1);}return s.join("-");})();
-
+  var lm=bodyData?bodyData.landmarks:null;
   var E=React.createElement;
-  var btn=function(active,onClick,ch){return E("button",{key:String(ch),onClick:onClick,className:"px-3 py-1.5 rounded-lg text-sm font-mono transition-all "+(active?"bg-violet-600 text-white shadow-lg shadow-violet-600/25":"bg-zinc-800 text-zinc-400 hover:bg-zinc-700")},ch);};
-  var chk=function(label,state,set){return E("label",{key:label,className:"flex items-center gap-3 p-2.5 rounded-lg bg-zinc-900/50 border border-zinc-800 cursor-pointer hover:border-zinc-700 transition-all"},
-    E("div",{className:"w-5 h-5 rounded flex items-center justify-center transition-all "+(state?"bg-violet-600":"bg-zinc-700"),onClick:function(e){e.preventDefault();set(!state);}},state&&E("span",{className:"text-white text-xs"},"\u2713")),
-    E("span",{className:"text-sm text-zinc-300"},label));};
-
-  // Landmarks display
-  var landmarkInfo = bodyMap && bodyMap._landmarks ? bodyMap._landmarks : null;
+  var btn=function(a,o,c){return E("button",{key:String(c),onClick:o,className:"px-3 py-1.5 rounded-lg text-sm font-mono transition-all "+(a?"bg-violet-600 text-white shadow-lg shadow-violet-600/25":"bg-zinc-800 text-zinc-400 hover:bg-zinc-700")},c);};
+  var chk=function(l,s,st){return E("label",{key:l,className:"flex items-center gap-3 p-2.5 rounded-lg bg-zinc-900/50 border border-zinc-800 cursor-pointer hover:border-zinc-700 transition-all"},E("div",{className:"w-5 h-5 rounded flex items-center justify-center transition-all "+(s?"bg-violet-600":"bg-zinc-700"),onClick:function(e){e.preventDefault();st(!s);}},s&&E("span",{className:"text-white text-xs"},"\u2713")),E("span",{className:"text-sm text-zinc-300"},l));};
 
   return E("div",{className:"min-h-screen bg-zinc-950 text-zinc-100 p-4 md:p-8"},
     E("div",{className:"max-w-6xl mx-auto"},
-      E("div",{className:"mb-8"},
-        E("h1",{className:"text-3xl font-bold tracking-tight bg-gradient-to-r from-violet-400 to-amber-300 bg-clip-text text-transparent"},"Sprite Sheet Generator"),
-        E("p",{className:"text-zinc-500 text-sm mt-1"},"Upload a character \u2192 pick animation \u2192 auto-generated sprite sheet")),
+      E("div",{className:"mb-8"},E("h1",{className:"text-3xl font-bold tracking-tight bg-gradient-to-r from-violet-400 to-amber-300 bg-clip-text text-transparent"},"Sprite Sheet Generator"),E("p",{className:"text-zinc-500 text-sm mt-1"},"Upload character \u2192 AI pose detection \u2192 body part extraction \u2192 animated sprite sheet")),
       E("div",{className:"grid grid-cols-1 lg:grid-cols-3 gap-6"},
         E("div",{className:"lg:col-span-1 space-y-5"},
-          E("div",{onDrop:handleDrop,onDragOver:function(e){e.preventDefault()},onClick:function(){fileInputRef.current&&fileInputRef.current.click()},
-            className:"border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-all "+(image?"border-violet-500/50 bg-violet-500/5":"border-zinc-700 hover:border-zinc-500 bg-zinc-900/50")},
+          E("div",{onDrop:handleDrop,onDragOver:function(e){e.preventDefault()},onClick:function(){fileInputRef.current&&fileInputRef.current.click()},className:"border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-all "+(image?"border-violet-500/50 bg-violet-500/5":"border-zinc-700 hover:border-zinc-500 bg-zinc-900/50")},
             E("input",{ref:fileInputRef,type:"file",accept:"image/*",onChange:handleUpload,className:"hidden"}),
-            image?E("div",{className:"flex flex-col items-center gap-3"},
-              E("img",{src:image,className:"max-h-32 max-w-32 object-contain",style:{imageRendering:charSize<=64?"pixelated":"auto"}}),
-              bodyMap?E("span",{className:"text-xs text-emerald-400"},"\u2713 Body mapped"):E("span",{className:"text-xs text-zinc-400"},"Click to change"))
-              :E("div",{className:"py-4"},E("div",{className:"text-4xl mb-2 opacity-40"},"\uD83C\uDFAE"),E("p",{className:"text-sm text-zinc-400"},"Drop character image here"),E("p",{className:"text-xs text-zinc-600 mt-1"},"PNG with transparency works best"))),
-          E("div",null,E("label",{className:"text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2 block"},"Frame Size"),
-            E("div",{className:"flex flex-wrap gap-2"},SIZES.map(function(s){return btn(charSize===s,function(){setCharSize(s)},s+"px");}))),
-          E("div",null,E("label",{className:"text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2 block"},"Frames per Animation"),
-            E("div",{className:"flex flex-wrap gap-2"},FRAME_OPTIONS.map(function(f){return btn(frameCount===f,function(){setFrameCount(f)},String(f));})),
-            E("p",{className:"text-xs text-zinc-600 mt-2 font-mono"},"Cycle: "+pingPong)),
-          E("div",null,E("label",{className:"text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2 block"},"Options"),
-            E("div",{className:"space-y-2"},chk("Drop Shadow",addShadow,setAddShadow),
-              E("label",{key:"rmbg",className:"flex items-center gap-3 p-2.5 rounded-lg bg-zinc-900/50 border border-zinc-800 cursor-pointer hover:border-zinc-700 transition-all"},
-                E("div",{className:"w-5 h-5 rounded flex items-center justify-center transition-all "+(removeBg?"bg-violet-600":"bg-zinc-700"),onClick:function(e){e.preventDefault();setRemoveBg(!removeBg);}},removeBg&&E("span",{className:"text-white text-xs"},"\u2713")),
-                E("span",{className:"text-sm text-zinc-300"},removing?"Removing BG...":"Remove Background")),
-              removeBg&&E("div",{className:"flex items-center gap-3 p-2.5 rounded-lg bg-zinc-900/50 border border-zinc-800"},
-                E("span",{className:"text-sm text-zinc-300"},"Tolerance"),
-                E("input",{type:"range",min:5,max:80,value:bgTolerance,onChange:function(e){setBgTolerance(+e.target.value)},className:"flex-1 accent-violet-500"}),
-                E("span",{className:"text-xs font-mono text-zinc-500 w-8 text-right"},bgTolerance)),
-              E("div",{className:"flex items-center gap-3 p-2.5 rounded-lg bg-zinc-900/50 border border-zinc-800"},
-                E("span",{className:"text-sm text-zinc-300"},"Padding"),
-                E("input",{type:"range",min:0,max:16,value:padding,onChange:function(e){setPadding(+e.target.value)},className:"flex-1 accent-violet-500"}),
-                E("span",{className:"text-xs font-mono text-zinc-500 w-8 text-right"},padding+"px"))))),
+            image?E("div",{className:"flex flex-col items-center gap-3"},E("img",{src:image,className:"max-h-32 max-w-32 object-contain",style:{imageRendering:charSize<=64?"pixelated":"auto"}}),aiStatus?E("span",{className:"text-xs "+(bodyData?"text-emerald-400":aiStatus.includes("Loading")?"text-violet-400 animate-pulse":"text-amber-400")},aiStatus):E("span",{className:"text-xs text-zinc-400"},"Click to change")):E("div",{className:"py-4"},E("div",{className:"text-4xl mb-2 opacity-40"},"\uD83C\uDFAE"),E("p",{className:"text-sm text-zinc-400"},"Drop character image here"),E("p",{className:"text-xs text-zinc-600 mt-1"},"PNG with transparency works best"))),
+          E("div",null,E("label",{className:"text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2 block"},"Frame Size"),E("div",{className:"flex flex-wrap gap-2"},SIZES.map(function(s){return btn(charSize===s,function(){setCharSize(s)},s+"px");}))),
+          E("div",null,E("label",{className:"text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2 block"},"Frames per Animation"),E("div",{className:"flex flex-wrap gap-2"},FRAME_OPTIONS.map(function(f){return btn(frameCount===f,function(){setFrameCount(f)},String(f));})),E("p",{className:"text-xs text-zinc-600 mt-2 font-mono"},"Cycle: "+pingPong)),
+          E("div",null,E("label",{className:"text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2 block"},"Options"),E("div",{className:"space-y-2"},chk("Drop Shadow",addShadow,setAddShadow),
+            E("label",{key:"rmbg",className:"flex items-center gap-3 p-2.5 rounded-lg bg-zinc-900/50 border border-zinc-800 cursor-pointer hover:border-zinc-700 transition-all"},E("div",{className:"w-5 h-5 rounded flex items-center justify-center transition-all "+(removeBg?"bg-violet-600":"bg-zinc-700"),onClick:function(e){e.preventDefault();setRemoveBg(!removeBg);}},removeBg&&E("span",{className:"text-white text-xs"},"\u2713")),E("span",{className:"text-sm text-zinc-300"},removing?"Removing BG...":"Remove Background")),
+            removeBg&&E("div",{className:"flex items-center gap-3 p-2.5 rounded-lg bg-zinc-900/50 border border-zinc-800"},E("span",{className:"text-sm text-zinc-300"},"Tolerance"),E("input",{type:"range",min:5,max:80,value:bgTolerance,onChange:function(e){setBgTolerance(+e.target.value)},className:"flex-1 accent-violet-500"}),E("span",{className:"text-xs font-mono text-zinc-500 w-8 text-right"},bgTolerance)),
+            E("div",{className:"flex items-center gap-3 p-2.5 rounded-lg bg-zinc-900/50 border border-zinc-800"},E("span",{className:"text-sm text-zinc-300"},"Padding"),E("input",{type:"range",min:0,max:16,value:padding,onChange:function(e){setPadding(+e.target.value)},className:"flex-1 accent-violet-500"}),E("span",{className:"text-xs font-mono text-zinc-500 w-8 text-right"},padding+"px"))))),
         E("div",{className:"lg:col-span-2 space-y-5"},
-          E("div",null,E("label",{className:"text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2 block"},"Animation Cycles"),
-            E("div",{className:"grid grid-cols-2 sm:grid-cols-4 gap-2"},
-              Object.entries(ANIMATIONS).map(function(entry){var key=entry[0],anim=entry[1];
-                return E("button",{key:key,onClick:function(){toggleAnim(key)},className:"p-3 rounded-xl text-left transition-all border "+(selectedAnims.includes(key)?"bg-violet-600/15 border-violet-500/50 shadow-lg shadow-violet-600/10":"bg-zinc-900/50 border-zinc-800 hover:border-zinc-700")},
-                  E("div",{className:"text-sm font-semibold text-zinc-200"},anim.label),E("div",{className:"text-xs text-zinc-500 mt-0.5"},anim.desc));}))),
+          E("div",null,E("label",{className:"text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2 block"},"Animation Cycles"),E("div",{className:"grid grid-cols-2 sm:grid-cols-4 gap-2"},Object.entries(ANIMATIONS).map(function(en){var k=en[0],a=en[1];return E("button",{key:k,onClick:function(){toggleAnim(k)},className:"p-3 rounded-xl text-left transition-all border "+(selectedAnims.includes(k)?"bg-violet-600/15 border-violet-500/50 shadow-lg shadow-violet-600/10":"bg-zinc-900/50 border-zinc-800 hover:border-zinc-700")},E("div",{className:"text-sm font-semibold text-zinc-200"},a.label),E("div",{className:"text-xs text-zinc-500 mt-0.5"},a.desc));}))),
           spriteSheet&&E("div",{className:"space-y-4"},
             E("div",{className:"flex gap-4 items-start flex-wrap"},
-              E("div",{className:"flex-shrink-0"},
-                E("label",{className:"text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2 block"},"Preview"),
-                E("div",{className:"flex flex-col items-center gap-2"},
-                  E(PreviewCanvas,null),
-                  E("button",{onClick:function(){setPlaying(!playing)},className:"px-4 py-2 rounded-lg text-sm font-semibold transition-all "+(playing?"bg-violet-600 text-white shadow-lg shadow-violet-600/25":"bg-zinc-800 text-zinc-400 hover:bg-zinc-700")},playing?"\u23F8 Pause":"\u25B6 Play"))),
-              E("div",{className:"flex-1 text-xs text-zinc-500 space-y-1 pt-6"},
-                E("p",null,E("span",{className:"text-zinc-400"},"Sheet: "),frameCount*(charSize+padding*2)+"\u00d7"+selectedAnims.length*(charSize+padding*2)+"px"),
-                E("p",null,E("span",{className:"text-zinc-400"},"Cell: "),(charSize+padding*2)+"px"),
-                E("p",null,E("span",{className:"text-zinc-400"},"Frames: "),frameCount*selectedAnims.length),
-                E("p",null,E("span",{className:"text-zinc-400"},"Cycle: "),E("span",{className:"font-mono text-violet-400"},pingPong)),
-                E("p",{className:"text-zinc-600 mt-2"},"Row: "+selectedAnims.map(function(a){return ANIMATIONS[a].label}).join(", ")),
-                landmarkInfo&&E("p",{className:"text-emerald-600 mt-1"},"Neck: "+Math.round(landmarkInfo.neckY*100)+"% | Shoulders: "+Math.round(landmarkInfo.shoulderY*100)+"% | Hips: "+Math.round(landmarkInfo.hipY*100)+"% | Split: "+Math.round(landmarkInfo.splitY*100)+"%"))),
-            E("div",null,E("label",{className:"text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2 block"},"Sprite Sheet"),
-              E("div",{className:"overflow-auto rounded-xl border border-zinc-800 p-2",style:{background:"repeating-conic-gradient(#27272a 0% 25%,#18181b 0% 50%) 0 0/16px 16px"}},
-                E("img",{src:spriteSheet,className:"max-w-full",style:{imageRendering:charSize<=64?"pixelated":"auto"}}))),
+              E("div",{className:"flex-shrink-0"},E("label",{className:"text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2 block"},"Preview"),E("div",{className:"flex flex-col items-center gap-2"},E(PreviewCanvas,null),E("button",{onClick:function(){setPlaying(!playing)},className:"px-4 py-2 rounded-lg text-sm font-semibold transition-all "+(playing?"bg-violet-600 text-white shadow-lg shadow-violet-600/25":"bg-zinc-800 text-zinc-400 hover:bg-zinc-700")},playing?"\u23F8 Pause":"\u25B6 Play"))),
+              E("div",{className:"flex-1 text-xs text-zinc-500 space-y-1 pt-6"},E("p",null,E("span",{className:"text-zinc-400"},"Sheet: "),frameCount*(charSize+padding*2)+"\u00d7"+selectedAnims.length*(charSize+padding*2)+"px"),E("p",null,E("span",{className:"text-zinc-400"},"Cell: "),(charSize+padding*2)+"px"),E("p",null,E("span",{className:"text-zinc-400"},"Frames: "),frameCount*selectedAnims.length),E("p",null,E("span",{className:"text-zinc-400"},"Cycle: "),E("span",{className:"font-mono text-violet-400"},pingPong)),bodyData&&E("p",{className:"text-emerald-600 mt-1"},bodyData.aiUsed?"\u2713 AI skeleton":"Heuristic"),lm&&E("p",{className:"text-zinc-600"},"Neck:"+Math.round(lm.neckY*100)+"% Sh:"+Math.round(lm.shoulderY*100)+"% Hip:"+Math.round(lm.hipY*100)+"%"))),
+            E("div",null,E("label",{className:"text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2 block"},"Sprite Sheet"),E("div",{className:"overflow-auto rounded-xl border border-zinc-800 p-2",style:{background:"repeating-conic-gradient(#27272a 0% 25%,#18181b 0% 50%) 0 0/16px 16px"}},E("img",{src:spriteSheet,className:"max-w-full",style:{imageRendering:charSize<=64?"pixelated":"auto"}}))),
             E("a",{href:spriteSheet,download:"spritesheet_"+charSize+"px_"+selectedAnims.join("-")+"_"+frameCount+"f.png",className:"inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold transition-all shadow-lg shadow-emerald-600/20"},"\u2B07 Download PNG"))))));
 }
 ReactDOM.render(React.createElement(App),document.getElementById("root"));
