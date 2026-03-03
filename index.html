@@ -57,44 +57,46 @@ function getBodyPixModel() {
 var PART_GROUP = new Int8Array(24);
 PART_GROUP[0]=0;PART_GROUP[1]=0; // head
 PART_GROUP[12]=1;PART_GROUP[13]=1; // torso
-PART_GROUP[2]=2;PART_GROUP[3]=2; // leftUpperArm
-PART_GROUP[6]=3;PART_GROUP[7]=3;PART_GROUP[10]=3; // leftLowerArm
-PART_GROUP[4]=4;PART_GROUP[5]=4; // rightUpperArm
-PART_GROUP[8]=5;PART_GROUP[9]=5;PART_GROUP[11]=5; // rightLowerArm
-PART_GROUP[14]=6;PART_GROUP[15]=6; // leftUpperLeg
-PART_GROUP[18]=7;PART_GROUP[19]=7;PART_GROUP[22]=7; // leftLowerLeg
-PART_GROUP[16]=8;PART_GROUP[17]=8; // rightUpperLeg
-PART_GROUP[20]=9;PART_GROUP[21]=9;PART_GROUP[23]=9; // rightLowerLeg
+PART_GROUP[2]=2;PART_GROUP[3]=2;PART_GROUP[6]=2;PART_GROUP[7]=2;PART_GROUP[10]=2; // left arm
+PART_GROUP[4]=3;PART_GROUP[5]=3;PART_GROUP[8]=3;PART_GROUP[9]=3;PART_GROUP[11]=3; // right arm
+PART_GROUP[14]=4;PART_GROUP[15]=4;PART_GROUP[18]=4;PART_GROUP[19]=4;PART_GROUP[22]=4; // left leg
+PART_GROUP[16]=5;PART_GROUP[17]=5;PART_GROUP[20]=5;PART_GROUP[21]=5;PART_GROUP[23]=5; // right leg
 
 
 // ============================================================
 // EXTRACT BODY PARTS using BodyPix per-pixel segmentation
-// ============================================================
-// EXTRACT BODY PARTS using BodyPix per-pixel segmentation
-// 10 parts: head, torso, L/R upper/lower arm, L/R upper/lower leg
 // ============================================================
 async function extractBodyParts(img) {
   var model = await getBodyPixModel();
-  var cv = document.createElement("canvas");
-  cv.width = img.width; cv.height = img.height;
-  var ctx = cv.getContext("2d");
-  ctx.drawImage(img, 0, 0);
-  var imgData = ctx.getImageData(0, 0, cv.width, cv.height);
-  var d = imgData.data;
-  var w = cv.width, h = cv.height;
 
-  var result = await model.segmentPersonParts(cv, {
-    flipHorizontal: false, internalResolution: 'high', segmentationThreshold: 0.55
+  // BodyPix needs a canvas
+  var c = document.createElement("canvas");
+  c.width = img.width; c.height = img.height;
+  var ctx = c.getContext("2d");
+  ctx.drawImage(img, 0, 0);
+  var imgData = ctx.getImageData(0, 0, c.width, c.height);
+  var d = imgData.data;
+  var w = c.width, h = c.height;
+
+  // Run BodyPix segmentation - returns per-pixel part IDs
+  var result = await model.segmentPersonParts(c, {
+    flipHorizontal: false,
+    internalResolution: 'high',
+    segmentationThreshold: 0.55
   });
-  var partData = result.data;
+
+  var partData = result.data; // Int32Array, -1 = background, 0-23 = part ID
   var aiUsed = false;
 
+  // Check how many pixels were detected
   var detected = 0;
   for (var i = 0; i < partData.length; i++) { if (partData[i] >= 0) detected++; }
   var totalOpaque = 0;
   for (var j = 0; j < w*h; j++) { if (d[j*4+3] > 30) totalOpaque++; }
   var coverage = totalOpaque > 0 ? detected / totalOpaque : 0;
 
+  // Build per-group pixel assignment
+  // groupMap[pixelIndex] = 0-5 group, or -1 if unassigned
   var groupMap = new Int8Array(w * h).fill(-1);
 
   if (coverage > 0.15) {
@@ -104,22 +106,28 @@ async function extractBodyParts(img) {
         groupMap[k] = PART_GROUP[partData[k]];
       }
     }
-    var changed = true, passes = 0;
+
+    // Fill gaps: any opaque pixel not assigned by BodyPix gets assigned
+    // to the nearest assigned pixel's group (flood-fill style)
+    var changed = true;
+    var passes = 0;
     while (changed && passes < 20) {
-      changed = false; passes++;
+      changed = false;
+      passes++;
       for (var fy = 0; fy < h; fy++) {
         for (var fx = 0; fx < w; fx++) {
           var fi = fy * w + fx;
           if (d[fi*4+3] <= 30 || groupMap[fi] >= 0) continue;
+          // Check 4-neighbors
           var best = -1, bestDist = 999;
-          for (var dy2 = -1; dy2 <= 1; dy2++) {
-            for (var dx2 = -1; dx2 <= 1; dx2++) {
-              if (dx2 === 0 && dy2 === 0) continue;
-              var ny = fy+dy2, nx = fx+dx2;
+          for (var dy = -1; dy <= 1; dy++) {
+            for (var dx = -1; dx <= 1; dx++) {
+              if (dx === 0 && dy === 0) continue;
+              var ny = fy+dy, nx = fx+dx;
               if (ny >= 0 && ny < h && nx >= 0 && nx < w) {
                 var ni = ny*w+nx;
                 if (groupMap[ni] >= 0) {
-                  var dd = Math.abs(dx2)+Math.abs(dy2);
+                  var dd = Math.abs(dx)+Math.abs(dy);
                   if (dd < bestDist) { bestDist = dd; best = groupMap[ni]; }
                 }
               }
@@ -130,152 +138,102 @@ async function extractBodyParts(img) {
       }
     }
   } else {
+    // Fallback: silhouette heuristic
     var rows = [];
     for (var ry=0;ry<h;ry++){var left=-1,right=-1;for(var rx=0;rx<w;rx++){if(d[(ry*w+rx)*4+3]>30){if(left<0)left=rx;right=rx;}}rows.push({left:left,right:right,width:left>=0?right-left+1:0,cx:left>=0?(left+right)/2:w/2});}
-    var topY2=0,botY2=h-1;
-    for(var a1=0;a1<h;a1++){if(rows[a1].width>0){topY2=a1;break;}}
-    for(var a2=h-1;a2>=0;a2--){if(rows[a2].width>0){botY2=a2;break;}}
-    var charH=botY2-topY2+1;
-    var neckY2=topY2+Math.floor(charH*0.28);
-    var crotchY2=topY2+Math.floor(charH*0.55);
-    var elbowY2=topY2+Math.floor(charH*0.42);
-    var kneeY2=topY2+Math.floor(charH*0.72);
+    var topY=0,botY=h-1;
+    for(var a1=0;a1<h;a1++){if(rows[a1].width>0){topY=a1;break;}}
+    for(var a2=h-1;a2>=0;a2--){if(rows[a2].width>0){botY=a2;break;}}
+    var charH=botY-topY+1;
+    var neckY=topY+Math.floor(charH*0.28);
+    var crotchY=topY+Math.floor(charH*0.55);
     for(var sy=0;sy<h;sy++){
       for(var sx=0;sx<w;sx++){
-        var si2=sy*w+sx;
-        if(d[si2*4+3]<=30) continue;
-        if(sy<=neckY2) groupMap[si2]=0;
-        else if(sy>=crotchY2){
-          if(sy<kneeY2) groupMap[si2]=sx<rows[sy].cx?6:8;
-          else groupMap[si2]=sx<rows[sy].cx?7:9;
-        } else{
-          var rowW=rows[sy].width, coreHalf=rowW*0.3, mid=rows[sy].cx;
-          if(Math.abs(sx-mid)<coreHalf) groupMap[si2]=1;
-          else if(sx<mid) groupMap[si2]=sy<elbowY2?2:3;
-          else groupMap[si2]=sy<elbowY2?4:5;
+        var si=sy*w+sx;
+        if(d[si*4+3]<=30) continue;
+        if(sy<=neckY) groupMap[si]=0;
+        else if(sy>=crotchY) groupMap[si]=sx<rows[sy].cx?4:5;
+        else{
+          var rowW=rows[sy].width;
+          var coreHalf=rowW*0.3;
+          var mid=rows[sy].cx;
+          if(Math.abs(sx-mid)<coreHalf) groupMap[si]=1;
+          else if(sx<mid) groupMap[si]=2;
+          else groupMap[si]=3;
         }
       }
     }
   }
 
-  var NUM_PARTS = 10;
-  var partNames = ["head","torso","leftUpperArm","leftLowerArm","rightUpperArm","rightLowerArm","leftUpperLeg","leftLowerLeg","rightUpperLeg","rightLowerLeg"];
+  // Compute bounding boxes and pivots per group
   var bounds = [];
-  for (var g=0;g<NUM_PARTS;g++) bounds.push({minX:w,minY:h,maxX:0,maxY:0,sumX:0,sumY:0,cnt:0});
-  for (var by2=0;by2<h;by2++){
-    for(var bx2=0;bx2<w;bx2++){
-      var bi=by2*w+bx2, bg=groupMap[bi];
+  for (var g=0;g<6;g++) bounds.push({minX:w,minY:h,maxX:0,maxY:0,sumX:0,sumY:0,cnt:0});
+  for (var by=0;by<h;by++){
+    for(var bx=0;bx<w;bx++){
+      var bi=by*w+bx;
+      var bg=groupMap[bi];
       if(bg<0) continue;
       var b=bounds[bg];
-      if(bx2<b.minX)b.minX=bx2; if(bx2>b.maxX)b.maxX=bx2;
-      if(by2<b.minY)b.minY=by2; if(by2>b.maxY)b.maxY=by2;
-      b.sumX+=bx2; b.sumY+=by2; b.cnt++;
+      if(bx<b.minX)b.minX=bx; if(bx>b.maxX)b.maxX=bx;
+      if(by<b.minY)b.minY=by; if(by>b.maxY)b.maxY=by;
+      b.sumX+=bx; b.sumY+=by; b.cnt++;
     }
   }
 
-  var B=bounds;
-  var headB=B[0],torsoB=B[1];
-  var luaB=B[2],llaB=B[3],ruaB=B[4],rlaB=B[5];
-  var lulB=B[6],lllB=B[7],rulB=B[8],rllB=B[9];
-
-  var neckPivotY=headB.cnt>0?headB.maxY:Math.floor(h*0.28);
-  var neckPivotX=headB.cnt>0?headB.sumX/headB.cnt:w/2;
-
-  var lShX=luaB.cnt>0?luaB.maxX:w*0.3, lShY=luaB.cnt>0?luaB.minY:neckPivotY;
-  var rShX=ruaB.cnt>0?ruaB.minX:w*0.7, rShY=ruaB.cnt>0?ruaB.minY:neckPivotY;
-
-  var lElbX=luaB.cnt>0?luaB.sumX/luaB.cnt:w*0.25;
-  var lElbY=luaB.cnt>0?luaB.maxY:(llaB.cnt>0?llaB.minY:h*0.42);
-  var rElbX=ruaB.cnt>0?ruaB.sumX/ruaB.cnt:w*0.75;
-  var rElbY=ruaB.cnt>0?ruaB.maxY:(rlaB.cnt>0?rlaB.minY:h*0.42);
-
-  var lHipX=lulB.cnt>0?lulB.sumX/lulB.cnt:w*0.4;
-  var lHipY=lulB.cnt>0?lulB.minY:h*0.55;
-  var rHipX=rulB.cnt>0?rulB.sumX/rulB.cnt:w*0.6;
-  var rHipY=rulB.cnt>0?rulB.minY:h*0.55;
-
-  var lKneeX=lulB.cnt>0?lulB.sumX/lulB.cnt:w*0.4;
-  var lKneeY=lulB.cnt>0?lulB.maxY:(lllB.cnt>0?lllB.minY:h*0.72);
-  var rKneeX=rulB.cnt>0?rulB.sumX/rulB.cnt:w*0.6;
-  var rKneeY=rulB.cnt>0?rulB.maxY:(rllB.cnt>0?rllB.minY:h*0.72);
+  // Pivots: connection points between parts
+  var headB=bounds[0], torsoB=bounds[1], lArmB=bounds[2], rArmB=bounds[3], lLegB=bounds[4], rLegB=bounds[5];
+  var neckPivotY = headB.cnt>0 ? headB.maxY : Math.floor(h*0.28);
+  var neckPivotX = headB.cnt>0 ? headB.sumX/headB.cnt : w/2;
+  var lShoulderX = lArmB.cnt>0 ? lArmB.maxX : w*0.3;
+  var lShoulderY = lArmB.cnt>0 ? lArmB.minY : neckPivotY;
+  var rShoulderX = rArmB.cnt>0 ? rArmB.minX : w*0.7;
+  var rShoulderY = rArmB.cnt>0 ? rArmB.minY : neckPivotY;
+  var lHipX = lLegB.cnt>0 ? lLegB.sumX/lLegB.cnt : w*0.4;
+  var lHipY = lLegB.cnt>0 ? lLegB.minY : h*0.55;
+  var rHipX = rLegB.cnt>0 ? rLegB.sumX/rLegB.cnt : w*0.6;
+  var rHipY = rLegB.cnt>0 ? rLegB.minY : h*0.55;
 
   var pivots = {
-    head:{x:neckPivotX,y:neckPivotY}, torso:{x:neckPivotX,y:(neckPivotY+Math.max(lHipY,rHipY))/2},
-    leftUpperArm:{x:lShX,y:lShY}, leftLowerArm:{x:lElbX,y:lElbY},
-    rightUpperArm:{x:rShX,y:rShY}, rightLowerArm:{x:rElbX,y:rElbY},
-    leftUpperLeg:{x:lHipX,y:lHipY}, leftLowerLeg:{x:lKneeX,y:lKneeY},
-    rightUpperLeg:{x:rHipX,y:rHipY}, rightLowerLeg:{x:rKneeX,y:rKneeY}
-  };
-  var chainEnds = {
-    leftUpperArm:{x:lElbX,y:lElbY}, rightUpperArm:{x:rElbX,y:rElbY},
-    leftUpperLeg:{x:lKneeX,y:lKneeY}, rightUpperLeg:{x:rKneeX,y:rKneeY}
+    head:     {x: neckPivotX, y: neckPivotY},
+    torso:    {x: (neckPivotX), y: (neckPivotY + Math.max(lHipY,rHipY))/2},
+    leftArm:  {x: lShoulderX, y: lShoulderY},
+    rightArm: {x: rShoulderX, y: rShoulderY},
+    leftLeg:  {x: lHipX, y: lHipY},
+    rightLeg: {x: rHipX, y: rHipY}
   };
 
-  // Body infill: dilated torso to fill gaps behind moving limbs
-  var infillCv = document.createElement("canvas");
-  infillCv.width = w; infillCv.height = h;
-  var infillCtx = infillCv.getContext("2d");
-  var infillImg = infillCtx.createImageData(w, h);
-  var infD = infillImg.data;
-  var dilateR = Math.max(4, Math.floor(Math.max(w,h)*0.04));
-  var torsoMask = new Uint8Array(w*h);
-  for(var ti=0;ti<w*h;ti++){if(groupMap[ti]===1) torsoMask[ti]=1;}
-  var dilated = new Uint8Array(torsoMask);
-  for(var dp=0;dp<dilateR;dp++){
-    var next=new Uint8Array(dilated);
-    for(var dy3=0;dy3<h;dy3++){for(var dx3=0;dx3<w;dx3++){
-      if(dilated[dy3*w+dx3]) continue;
-      if(d[(dy3*w+dx3)*4+3]<=30) continue;
-      for(var nn=-1;nn<=1;nn++){for(var mm=-1;mm<=1;mm++){
-        var ny3=dy3+nn,nx3=dx3+mm;
-        if(ny3>=0&&ny3<h&&nx3>=0&&nx3<w&&dilated[ny3*w+nx3]){next[dy3*w+dx3]=1;nn=2;break;}
-      }}
-    }}
-    dilated=next;
-  }
-  for(var iy=0;iy<h;iy++){for(var ix=0;ix<w;ix++){
-    var ii=iy*w+ix;
-    if(!dilated[ii]||torsoMask[ii]) continue;
-    var bestC=-1,bestD2=99999;
-    var sr=dilateR+2;
-    for(var sy2=Math.max(0,iy-sr);sy2<Math.min(h,iy+sr);sy2++){
-      for(var sx2=Math.max(0,ix-sr);sx2<Math.min(w,ix+sr);sx2++){
-        if(torsoMask[sy2*w+sx2]){
-          var dd2=(iy-sy2)*(iy-sy2)+(ix-sx2)*(ix-sx2);
-          if(dd2<bestD2){bestD2=dd2;bestC=(sy2*w+sx2)*4;}
-        }
-      }
-    }
-    if(bestC>=0){infD[ii*4]=d[bestC];infD[ii*4+1]=d[bestC+1];infD[ii*4+2]=d[bestC+2];infD[ii*4+3]=d[bestC+3];}
-  }}
-  infillCtx.putImageData(infillImg,0,0);
-  var infillImgEl=new Image();infillImgEl.src=infillCv.toDataURL();infillImgEl.width=w;infillImgEl.height=h;
-
+  // Extract each part as masked canvas with overlap blending
+  var partNames = ["head","torso","leftArm","rightArm","leftLeg","rightLeg"];
   var overlapPx = Math.max(3, Math.floor(Math.max(w,h) * 0.04));
   var parts = {};
-  for (var pi=0; pi<NUM_PARTS; pi++) {
+
+  for (var pi=0; pi<6; pi++) {
     var pc = document.createElement("canvas");
     pc.width = w; pc.height = h;
     var pctx = pc.getContext("2d");
     var pimg = pctx.createImageData(w, h);
-    var pd2 = pimg.data;
-    for (var py2=0; py2<h; py2++) {
-      for (var px2=0; px2<w; px2++) {
-        var pidx = py2*w+px2;
+    var pd = pimg.data;
+
+    for (var py=0; py<h; py++) {
+      for (var px=0; px<w; px++) {
+        var pidx = py*w+px;
         if (d[pidx*4+3] <= 10) continue;
-        var si3 = pidx*4;
+        var si2 = pidx*4;
         if (groupMap[pidx] === pi) {
-          pd2[si3]=d[si3];pd2[si3+1]=d[si3+1];pd2[si3+2]=d[si3+2];pd2[si3+3]=d[si3+3];
+          // Core pixel
+          pd[si2]=d[si2]; pd[si2+1]=d[si2+1]; pd[si2+2]=d[si2+2]; pd[si2+3]=d[si2+3];
         } else {
+          // Check overlap zone
           var nearOwn = false;
           for (var ody=-overlapPx; ody<=overlapPx && !nearOwn; ody+=2) {
             for (var odx=-overlapPx; odx<=overlapPx && !nearOwn; odx+=2) {
-              var ony=py2+ody, onx=px2+odx;
+              var ony=py+ody, onx=px+odx;
               if(ony>=0&&ony<h&&onx>=0&&onx<w && groupMap[ony*w+onx]===pi) nearOwn=true;
             }
           }
           if (nearOwn) {
-            pd2[si3]=d[si3];pd2[si3+1]=d[si3+1];pd2[si3+2]=d[si3+2];pd2[si3+3]=Math.round(d[si3+3]*0.4);
+            pd[si2]=d[si2]; pd[si2+1]=d[si2+1]; pd[si2+2]=d[si2+2];
+            pd[si2+3]=Math.round(d[si2+3]*0.4);
           }
         }
       }
@@ -284,23 +242,20 @@ async function extractBodyParts(img) {
     var partImg = new Image();
     partImg.src = pc.toDataURL();
     partImg.width = w; partImg.height = h;
-    parts[partNames[pi]] = {img:partImg, pivot:pivots[partNames[pi]], chainEnd:chainEnds[partNames[pi]]||null};
+    parts[partNames[pi]] = {img: partImg, pivot: pivots[partNames[pi]]};
   }
 
   return {
-    parts: parts, infill: infillImgEl, width: w, height: h, aiUsed: aiUsed, coverage: coverage,
+    parts: parts, width: w, height: h, aiUsed: aiUsed, coverage: coverage,
     landmarks: {
       topY: (headB.cnt>0?headB.minY:0)/h,
       neckY: neckPivotY/h,
-      shoulderY: Math.min(lShY,rShY)/h,
-      elbowY: Math.max(lElbY,rElbY)/h,
+      shoulderY: Math.min(lShoulderY,rShoulderY)/h,
       hipY: Math.max(lHipY,rHipY)/h,
-      kneeY: Math.max(lKneeY,rKneeY)/h,
-      botY: (Math.max(lllB.cnt>0?lllB.maxY:0,rllB.cnt>0?rllB.maxY:0)||h)/h
+      botY: (Math.max(lLegB.maxY,rLegB.maxY)||h)/h
     }
   };
 }
-
 
 // ============================================================
 // CLAUDE VISION API - analyzes character anatomy
@@ -325,37 +280,21 @@ function drawPartImg(ctx, partData, imgW, imgH, size, rot, ox, oy, alpha) {
   ctx.restore();
 }
 
-function chainOffset(part, rot) {
-  if(!part||!part.chainEnd) return {x:0,y:0};
-  var dx=part.chainEnd.x-part.pivot.x, dy=part.chainEnd.y-part.pivot.y;
-  var cs=Math.cos(rot), sn=Math.sin(rot);
-  return {x:dx*cs-dy*sn-dx, y:dx*sn+dy*cs-dy};
-}
 function drawAnimChar(ctx, bd, size, pose) {
   if (!bd || !bd.parts) return;
   var iw = bd.width, ih = bd.height;
   var bx=pose.bx||0, by=pose.by||0;
   var al = pose.alpha!==undefined ? pose.alpha : 1;
-  if(bd.infill&&bd.infill.complete){ctx.save();if(al<1) ctx.globalAlpha=al;var iox=(size-iw)/2,ioy=(size-ih)/2;ctx.drawImage(bd.infill,0,0,iw,ih,iox+bx,ioy+by,iw,ih);ctx.restore();}
-  function gP(n){return pose[n]||{};}
-  function uP(u,o){var a=pose[u];if(a)return a;var b=pose[o];if(b)return{rot:(b.rot||0)*0.6,ox:b.ox,oy:b.oy};return{};}
-  function lP(l,o){var a=pose[l];if(a)return a;var b=pose[o];if(b)return{rot:(b.rot||0)*0.5};return{};}
-  function dp(n,r,x,y){var p=bd.parts[n];if(p&&p.img)drawPartImg(ctx,p,iw,ih,size,r,x,y,al);}
-  var tP=gP("torso"),hP=gP("head");
-  var ruL=uP("rightUpperLeg","rightLeg"),rlL=lP("rightLowerLeg","rightLeg");
-  dp("rightUpperLeg",ruL.rot||0,bx,by);var rkO=chainOffset(bd.parts.rightUpperLeg,ruL.rot||0);
-  dp("rightLowerLeg",(ruL.rot||0)+(rlL.rot||0),bx+rkO.x,by+rkO.y);
-  var ruA=uP("rightUpperArm","rightArm"),rlA=lP("rightLowerArm","rightArm");
-  dp("rightUpperArm",ruA.rot||0,bx,by);var reO=chainOffset(bd.parts.rightUpperArm,ruA.rot||0);
-  dp("rightLowerArm",(ruA.rot||0)+(rlA.rot||0),bx+reO.x,by+reO.y);
-  dp("torso",tP.rot||0,bx+(tP.ox||0),by+(tP.oy||0));
-  dp("head",hP.rot||0,bx+(hP.ox||0)+(tP.ox||0)*0.4,by+(hP.oy||0)+(tP.oy||0)*0.4);
-  var luA=uP("leftUpperArm","leftArm"),llA=lP("leftLowerArm","leftArm");
-  dp("leftUpperArm",luA.rot||0,bx,by);var leO=chainOffset(bd.parts.leftUpperArm,luA.rot||0);
-  dp("leftLowerArm",(luA.rot||0)+(llA.rot||0),bx+leO.x,by+leO.y);
-  var luL=uP("leftUpperLeg","leftLeg"),llL=lP("leftLowerLeg","leftLeg");
-  dp("leftUpperLeg",luL.rot||0,bx,by);var lkO=chainOffset(bd.parts.leftUpperLeg,luL.rot||0);
-  dp("leftLowerLeg",(luL.rot||0)+(llL.rot||0),bx+lkO.x,by+lkO.y);
+  // Draw back-to-front: back leg, back arm, torso, head, front arm, front leg
+  var order = ["rightLeg","rightArm","torso","head","leftArm","leftLeg"];
+  order.forEach(function(name) {
+    var part = bd.parts[name];
+    if (!part||!part.img) return;
+    var pr = pose[name] || {};
+    var ox = bx+(pr.ox||0), oy = by+(pr.oy||0);
+    if (name==="head"){var tr=pose.torso||{}; ox+=(tr.ox||0)*0.4; oy+=(tr.oy||0)*0.4;}
+    drawPartImg(ctx, part, iw, ih, size, pr.rot||0, ox, oy, al);
+  });
 }
 
 function drawCharFallback(ctx, img, size, pose) {
@@ -415,19 +354,18 @@ function drawWeapon(ctx, wpn, bd, size, pose, position) {
     }
     ctx.restore();
   } else {
-    var armP=pose.leftUpperArm||pose.leftArm||pose.rightArm||{};var foreP=pose.leftLowerArm||{};var aRot=armP.rot||0;
+    var aRot=pose.rightArm?pose.rightArm.rot||0:0;
     var lm=bd?bd.landmarks:null;
     var sY=lm?lm.shoulderY*size:size*0.28;
-    var elbY=lm?lm.elbowY*size:(sY+size*0.14);
-    var aLen=elbY-sY;var fLen=lm?(lm.hipY*size-elbY)*0.7:size*0.15;
-    var shoulder_x=size*0.45+(tP.ox||0);
+    var hY_lm=lm?lm.hipY*size:size*0.52;
+    var aLen=(hY_lm-sY)*0.9;
+    var shoulder_x=size*0.55+(tP.ox||0);
     var shoulder_y=sY+by+(tP.oy||0);
-    var eX=shoulder_x+Math.sin(aRot)*aLen;var eY=shoulder_y+Math.cos(aRot)*aLen;
-    var totalRot=aRot+(foreP.rot||0);
-    var hX=eX+Math.sin(totalRot)*fLen;var hY=eY+Math.cos(totalRot)*fLen;
+    var hX=shoulder_x+Math.sin(aRot)*aLen;
+    var hY=shoulder_y+Math.cos(aRot)*aLen;
     ctx.save();
     ctx.translate(hX,hY);
-    ctx.rotate(totalRot+0.1);
+    ctx.rotate(aRot+0.1);
     ctx.drawImage(wi,0,-wh*0.5,ww,wh);
     ctx.restore();
   }
@@ -649,13 +587,13 @@ function App(){
   var _sa=useState(["idle"]),selectedAnims=_sa[0],setSelectedAnims=_sa[1];
   var _fc=useState(8),frameCount=_fc[0],setFrameCount=_fc[1];
   var _cs=useState(128),charSize=_cs[0],setCharSize=_cs[1];
-  var _sh=useState(false),addShadow=_sh[0],setAddShadow=_sh[1];
+  var _sh=useState(true),addShadow=_sh[0],setAddShadow=_sh[1];
   var _pd=useState(0),padding=_pd[0],setPadding=_pd[1];
   var _ss=useState(null),spriteSheet=_ss[0],setSpriteSheet=_ss[1];
   var _pa=useState(null),previewAnim=_pa[0],setPreviewAnim=_pa[1];
   var _pf=useState(0),previewFrame=_pf[0],setPreviewFrame=_pf[1];
   var _pl=useState(true),playing=_pl[0],setPlaying=_pl[1];
-  var _rbg=useState(false),removeBg=_rbg[0],setRemoveBg=_rbg[1];
+  var _rbg=useState(true),removeBg=_rbg[0],setRemoveBg=_rbg[1];
   var _tol=useState(35),bgTolerance=_tol[0],setBgTolerance=_tol[1];
   var _rming=useState(false),removing=_rming[0],setRemoving=_rming[1];
   var _bd=useState(null),bodyData=_bd[0],setBodyData=_bd[1];
@@ -738,7 +676,7 @@ function App(){
               if(loaded===names.length && !cancelled){
                 setBodyData(bd);
                 if (bd.aiUsed) {
-                  setAiStatus("\u2713 10-part (" + Math.round(bd.coverage*100) + "% coverage)");
+                  setAiStatus("\u2713 Segmented (" + Math.round(bd.coverage*100) + "% coverage)");
                 } else {
                   setAiStatus("\u2713 Heuristic segmentation");
                 }
@@ -854,7 +792,7 @@ function App(){
           spriteSheet&&E("div",{className:"space-y-4"},
             E("div",{className:"flex gap-4 items-start flex-wrap"},
               E("div",{className:"flex-shrink-0"},E("label",{className:"text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2 block"},"Preview"),E("div",{className:"flex flex-col items-center gap-2"},E(PreviewCanvas,null),E("button",{onClick:function(){setPlaying(!playing)},className:"px-4 py-2 rounded-lg text-sm font-semibold transition-all "+(playing?"bg-violet-600 text-white shadow-lg shadow-violet-600/25":"bg-zinc-800 text-zinc-400 hover:bg-zinc-700")},playing?"Pause":"Play"))),
-              E("div",{className:"flex-1 text-xs text-zinc-500 space-y-1 pt-6"},E("p",null,E("span",{className:"text-zinc-400"},"Sheet: "),frameCount*(charSize+padding*2)+"\u00d7"+selectedAnims.length*(charSize+padding*2)+"px"),E("p",null,E("span",{className:"text-zinc-400"},"Cell: "),(charSize+padding*2)+"px"),E("p",null,E("span",{className:"text-zinc-400"},"Frames: "),frameCount*selectedAnims.length),E("p",null,E("span",{className:"text-zinc-400"},"Cycle: "),E("span",{className:"font-mono text-violet-400"},pingPong)),bodyData&&E("p",{className:"text-emerald-600 mt-1"},bodyData.aiUsed?"\u2713 BodyPix 10-part":"\u2713 Heuristic"),lm&&E("p",{className:"text-zinc-600"},"Neck:"+Math.round(lm.neckY*100)+"% Sh:"+Math.round(lm.shoulderY*100)+"% Hip:"+Math.round(lm.hipY*100)+"%"))),
+              E("div",{className:"flex-1 text-xs text-zinc-500 space-y-1 pt-6"},E("p",null,E("span",{className:"text-zinc-400"},"Sheet: "),frameCount*(charSize+padding*2)+"\u00d7"+selectedAnims.length*(charSize+padding*2)+"px"),E("p",null,E("span",{className:"text-zinc-400"},"Cell: "),(charSize+padding*2)+"px"),E("p",null,E("span",{className:"text-zinc-400"},"Frames: "),frameCount*selectedAnims.length),E("p",null,E("span",{className:"text-zinc-400"},"Cycle: "),E("span",{className:"font-mono text-violet-400"},pingPong)),bodyData&&E("p",{className:"text-emerald-600 mt-1"},bodyData.aiUsed?"\u2713 BodyPix neural net":"\u2713 Heuristic"),lm&&E("p",{className:"text-zinc-600"},"Neck:"+Math.round(lm.neckY*100)+"% Sh:"+Math.round(lm.shoulderY*100)+"% Hip:"+Math.round(lm.hipY*100)+"%"))),
             E("div",null,E("label",{className:"text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2 block"},"Sprite Sheet"),E("div",{className:"overflow-auto rounded-xl border border-zinc-800 p-2",style:{background:"repeating-conic-gradient(#27272a 0% 25%,#18181b 0% 50%) 0 0/16px 16px"}},E("img",{src:spriteSheet,className:"max-w-full",style:{imageRendering:charSize<=64?"pixelated":"auto"}}))),
             E("a",{href:spriteSheet,download:"spritesheet_"+charSize+"px_"+selectedAnims.join("-")+"_"+frameCount+"f.png",className:"inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold transition-all shadow-lg shadow-emerald-600/20"},"\u2B07 Download PNG"))))));
 }
