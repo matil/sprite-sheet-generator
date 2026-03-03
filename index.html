@@ -725,7 +725,7 @@ function App(){
   // Body part extraction - BodyPix auto, Claude manual only
   useEffect(function(){
     if(!imgEl) { setBodyData(null); setAiStatus(""); return; }
-    if(useClaude) { setAiStatus("Click 'Analyze with Claude' (~$0.01 per use)"); return; }
+    
     var cancelled = false;
     async function run() {
       try {
@@ -758,7 +758,7 @@ function App(){
     }
     run();
     return function(){ cancelled = true; };
-  },[imgEl, useClaude]);
+  },[imgEl]);
 
   // Claude Vision - manual trigger only (costs money)
   useEffect(function(){
