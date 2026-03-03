@@ -310,17 +310,48 @@ function drawShadow(ctx,size){ctx.save();ctx.beginPath();ctx.ellipse(size/2,size
 function drawSpark(ctx,x,y,r,a){ctx.save();ctx.globalAlpha=a;ctx.strokeStyle='#fff';ctx.lineWidth=2;for(var i=0;i<6;i++){var an=(i/6)*Math.PI*2;ctx.beginPath();ctx.moveTo(x+Math.cos(an)*r*0.25,y+Math.sin(an)*r*0.25);ctx.lineTo(x+Math.cos(an)*r,y+Math.sin(an)*r);ctx.stroke();}ctx.restore();}
 
 
+function detectWeaponType(img) {
+  var w=img.width, h=img.height, ar=w/Math.max(h,1);
+  if(ar>2.2) return "gun";
+  if(ar<0.5) return "melee";
+  try {
+    var cv=document.createElement("canvas"); cv.width=w; cv.height=h;
+    var cx=cv.getContext("2d"); cx.drawImage(img,0,0);
+    var d=cx.getImageData(0,0,w,h).data;
+    var topW=0,botW=0,topC=0,botC=0;
+    for(var y=0;y<h;y++){for(var x=0;x<w;x++){
+      if(d[(y*w+x)*4+3]>128){if(y<h*0.4){topW++;} else if(y>h*0.6){botW++;}}
+    }}
+    if(topW>botW*1.5) return "gun";
+    if(botW>topW*1.5) return "melee";
+  } catch(e){}
+  return ar>1.2?"gun":"melee";
+}
+
 function drawWeapon(ctx, wpn, bd, size, pose, position) {
   if(!wpn||!wpn.img) return;
   var wi=wpn.img, ar=wi.width/Math.max(wi.height,1);
-  var ws=size*0.28, ww=ws*ar, wh=ws;
+  var pct=(wpn.size||30)/100;
+  var ws=size*pct, ww=ws*ar, wh=ws;
   var tP=pose.torso||{}, by=pose.by||0;
   if(position==="back"){
+    var lm=bd?bd.landmarks:null;
+    var shY=lm?lm.shoulderY*size:size*0.25;
+    var hipY=lm?lm.hipY*size:size*0.52;
+    var backCx=size*0.42+(tP.ox||0)*0.3;
+    var backCy=(shY+hipY)*0.5+by+(tP.oy||0)*0.3;
+    var bRot=(tP.rot||0)*0.3;
     ctx.save();
-    ctx.translate(size*0.35+(tP.ox||0)*0.4, size*0.32+(tP.oy||0)*0.4+by);
-    ctx.rotate(-0.5+(tP.rot||0)*0.4);
-    ctx.globalAlpha=0.7;
-    ctx.drawImage(wi,0,-wh*0.3,ww*0.8,wh*0.8);
+    ctx.translate(backCx, backCy);
+    ctx.rotate(bRot);
+    ctx.globalAlpha=0.75;
+    if(wpn.type==="gun"){
+      ctx.rotate(-Math.PI/2+0.1);
+      ctx.drawImage(wi,-ww*0.5,-wh*0.4,ww*0.7,wh*0.7);
+    } else {
+      ctx.rotate(Math.PI/2-0.1);
+      ctx.drawImage(wi,-ww*0.5,-wh*0.3,ww*0.7,wh*0.7);
+    }
     ctx.restore();
   } else {
     var aRot=pose.rightArm?pose.rightArm.rot||0:0;
@@ -578,7 +609,7 @@ function App(){
   var _wpnAll=useState(false),wpnShowAll=_wpnAll[0],setWpnShowAll=_wpnAll[1];
   var _wpnPos=useState("hand"),wpnPosition=_wpnPos[0],setWpnPosition=_wpnPos[1];
   var _wpnRaw=useState(null),wpnRawImg=_wpnRaw[0],setWpnRawImg=_wpnRaw[1];
-  var _wpnPad=useState(0),wpnPadding=_wpnPad[0],setWpnPadding=_wpnPad[1];
+  var _wpnSz=useState(30),wpnSize=_wpnSz[0],setWpnSize=_wpnSz[1];
 
   var handleUpload=useCallback(function(e){
     var file=(e.target.files||[])[0]; if(!file)return;
@@ -594,10 +625,10 @@ function App(){
   var handleWeaponUpload=useCallback(function(e){
     var file=(e.target.files||[])[0]; if(!file)return;
     var url=URL.createObjectURL(file); setWeaponImage(url);
-    var wimg=new Image(); wimg.onload=function(){setWpnRawImg(wimg);setWeaponImgEl(wimg);}; wimg.src=url;
-    if(!weaponType) setWeaponType("melee");
+    var wimg=new Image(); wimg.onload=function(){setWpnRawImg(wimg);setWeaponImgEl(wimg);try{setWeaponType(detectWeaponType(wimg));}catch(e){}}; wimg.src=url;
+    
   },[weaponType]);
-  var removeWeapon=useCallback(function(){setWeaponImage(null);setWeaponImgEl(null);setWeaponType("");setWpnRawImg(null);setWpnRemoveBg(false);setWpnShowAll(false);},[]);
+  var removeWeapon=useCallback(function(){setWeaponImage(null);setWeaponImgEl(null);setWeaponType("");setWpnRawImg(null);setWpnRemoveBg(false);setWpnShowAll(false);setWpnSize(30);},[]);
   var toggleAnim=function(key){setSelectedAnims([key]);};
 
   useEffect(function(){
@@ -703,7 +734,7 @@ function App(){
             ox.save(); ox.translate(padding,padding);
             if(addShadow) drawShadow(ox,charSize);
             var m=anim.linear?{frame:f,total:frameCount}:getPingPong(f,frameCount);
-            var wpnData=weaponImgEl?{img:weaponImgEl,type:weaponType||"melee",showAll:wpnShowAll,position:wpnPosition,pad:wpnPadding}:null; anim.generate(ox,fitted,m.frame,m.total,charSize,fBD,wpnData);
+            var wpnData=weaponImgEl?{img:weaponImgEl,type:weaponType||"melee",showAll:wpnShowAll,position:wpnPosition,size:wpnSize}:null; anim.generate(ox,fitted,m.frame,m.total,charSize,fBD,wpnData);
             ox.restore(); ctx.drawImage(oc,f*cs,row*cs);
           }
         });
@@ -712,7 +743,7 @@ function App(){
       }catch(e){console.error("Gen:",e);}
     };
     if(fitted.complete) doGen(); else fitted.onload=doGen;
-  },[imgEl,selectedAnims,frameCount,charSize,addShadow,padding,fitImage,fitBodyData,bodyData,weaponImgEl,weaponType,wpnShowAll,wpnPosition,wpnRemoveBg,wpnBgTol,wpnPadding]);
+  },[imgEl,selectedAnims,frameCount,charSize,addShadow,padding,fitImage,fitBodyData,bodyData,weaponImgEl,weaponType,wpnShowAll,wpnPosition,wpnRemoveBg,wpnBgTol,wpnSize]);
 
   useEffect(function(){
     if(!spriteSheet||!previewAnim||!playing)return;
@@ -755,7 +786,7 @@ function App(){
             removeBg&&E("div",{className:"flex items-center gap-3 p-2.5 rounded-lg bg-zinc-900/50 border border-zinc-800"},E("span",{className:"text-sm text-zinc-300"},"Tolerance"),E("input",{type:"range",min:5,max:80,value:bgTolerance,onChange:function(e){setBgTolerance(+e.target.value)},className:"flex-1 accent-violet-500"}),E("span",{className:"text-xs font-mono text-zinc-500 w-8 text-right"},bgTolerance)),
             E("div",{className:"flex items-center gap-3 p-2.5 rounded-lg bg-zinc-900/50 border border-zinc-800"},E("span",{className:"text-sm text-zinc-300"},"Padding"),E("input",{type:"range",min:0,max:16,value:padding,onChange:function(e){setPadding(+e.target.value)},className:"flex-1 accent-violet-500"}),E("span",{className:"text-xs font-mono text-zinc-500 w-8 text-right"},padding+"px")))),
           E("button",{onClick:function(){setShowWpnPanel(!showWpnPanel)},className:"w-full px-3 py-1.5 rounded-lg text-xs font-semibold transition-all border "+(showWpnPanel?"bg-amber-600/15 border-amber-500/50 text-amber-300":"bg-zinc-900/50 border-zinc-800 text-zinc-400 hover:border-zinc-700")},showWpnPanel?[iconSword()," Hide Weapon"]:[iconSword()," Add Weapon"]),
-          showWpnPanel&&E("div",{className:"space-y-3 p-4 rounded-xl border border-amber-500/20 bg-amber-500/5"},E("div",{onClick:function(){weaponInputRef.current&&weaponInputRef.current.click()},className:"border-2 border-dashed rounded-xl p-4 text-center cursor-pointer transition-all "+(weaponImage?"border-amber-500/50 bg-amber-500/5":"border-zinc-700 hover:border-zinc-500 bg-zinc-900/50")},E("input",{ref:weaponInputRef,type:"file",accept:"image/*",onChange:handleWeaponUpload,className:"hidden"}),weaponImage?E("div",{className:"flex flex-col items-center gap-2"},E("img",{src:weaponImage,className:"max-h-20 max-w-20 object-contain"}),E("span",{className:"text-xs text-zinc-400"},"Click to change")):E("div",null,E("div",{className:"opacity-40 mb-1",style:{transform:"scale(1.8)"}},iconSword()),E("p",{className:"text-xs text-zinc-400 mt-2"},"Upload weapon image"))),weaponImage&&E("div",{className:"space-y-2 mt-2"},E("label",{className:"text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-1 block"},"Weapon Type"),E("div",{className:"flex gap-2"},E("button",{onClick:function(){setWeaponType("melee")},className:"flex-1 px-3 py-2 rounded-lg text-xs font-semibold transition-all "+(weaponType==="melee"?"bg-amber-600 text-white shadow-lg":"bg-zinc-800 text-zinc-400 hover:bg-zinc-700")},[iconSword(),"Melee"]),E("button",{onClick:function(){setWeaponType("gun")},className:"flex-1 px-3 py-2 rounded-lg text-xs font-semibold transition-all "+(weaponType==="gun"?"bg-amber-600 text-white shadow-lg":"bg-zinc-800 text-zinc-400 hover:bg-zinc-700")},[iconGun(),"Gun"])),E("div",{className:"space-y-2"},E("label",{className:"flex items-center gap-3 p-2.5 rounded-lg bg-zinc-900/50 border border-zinc-800 cursor-pointer hover:border-zinc-700 transition-all"},E("div",{className:"w-5 h-5 rounded flex items-center justify-center transition-all "+(wpnRemoveBg?"bg-amber-600":"bg-zinc-700"),onClick:function(e){e.preventDefault();setWpnRemoveBg(!wpnRemoveBg);}},wpnRemoveBg&&E("span",{className:"text-white text-xs"},"\u2713")),E("span",{className:"text-sm text-zinc-300"},"Remove Background")),wpnRemoveBg&&E("div",{className:"flex items-center gap-3 p-2.5 rounded-lg bg-zinc-900/50 border border-zinc-800"},E("span",{className:"text-sm text-zinc-300"},"Tolerance"),E("input",{type:"range",min:5,max:80,value:wpnBgTol,onChange:function(e){setWpnBgTol(+e.target.value)},className:"flex-1 accent-amber-500"}),E("span",{className:"text-xs font-mono text-zinc-500 w-8 text-right"},wpnBgTol)),E("div",{className:"flex items-center gap-3 p-2.5 rounded-lg bg-zinc-900/50 border border-zinc-800"},E("span",{className:"text-sm text-zinc-300"},"Padding"),E("input",{type:"range",min:0,max:20,value:wpnPadding,onChange:function(e){setWpnPadding(+e.target.value)},className:"flex-1 accent-amber-500"}),E("span",{className:"text-xs font-mono text-zinc-500 w-8 text-right"},wpnPadding+"px")),E("label",{className:"flex items-center gap-3 p-2.5 rounded-lg bg-zinc-900/50 border border-zinc-800 cursor-pointer hover:border-zinc-700 transition-all"},E("div",{className:"w-5 h-5 rounded flex items-center justify-center transition-all "+(wpnShowAll?"bg-amber-600":"bg-zinc-700"),onClick:function(e){e.preventDefault();setWpnShowAll(!wpnShowAll);}},wpnShowAll&&E("span",{className:"text-white text-xs"},"\u2713")),E("span",{className:"text-sm text-zinc-300"},"Show on all animations"))),E("button",{onClick:removeWeapon,className:"w-full px-3 py-1.5 rounded-lg text-xs text-zinc-500 hover:text-red-400 hover:bg-zinc-800 transition-all"},"Remove weapon")))),
+          showWpnPanel&&E("div",{className:"space-y-3 p-4 rounded-xl border border-amber-500/20 bg-amber-500/5"},E("div",{onClick:function(){weaponInputRef.current&&weaponInputRef.current.click()},className:"border-2 border-dashed rounded-xl p-4 text-center cursor-pointer transition-all "+(weaponImage?"border-amber-500/50 bg-amber-500/5":"border-zinc-700 hover:border-zinc-500 bg-zinc-900/50")},E("input",{ref:weaponInputRef,type:"file",accept:"image/*",onChange:handleWeaponUpload,className:"hidden"}),weaponImage?E("div",{className:"flex flex-col items-center gap-2"},E("img",{src:weaponImage,className:"max-h-20 max-w-20 object-contain"}),E("span",{className:"text-xs text-zinc-400"},"Click to change")):E("div",null,E("div",{className:"opacity-40 mb-1",style:{transform:"scale(1.8)"}},iconSword()),E("p",{className:"text-xs text-zinc-400 mt-2"},"Upload weapon image"))),weaponImage&&E("div",{className:"space-y-2 mt-2"},E("label",{className:"text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-1 block"},"Weapon Type"),E("div",{className:"flex gap-2"},E("button",{onClick:function(){setWeaponType("melee")},className:"flex-1 px-3 py-2 rounded-lg text-xs font-semibold transition-all "+(weaponType==="melee"?"bg-amber-600 text-white shadow-lg":"bg-zinc-800 text-zinc-400 hover:bg-zinc-700")},[iconSword(),"Melee"]),E("button",{onClick:function(){setWeaponType("gun")},className:"flex-1 px-3 py-2 rounded-lg text-xs font-semibold transition-all "+(weaponType==="gun"?"bg-amber-600 text-white shadow-lg":"bg-zinc-800 text-zinc-400 hover:bg-zinc-700")},[iconGun(),"Gun"])),E("div",{className:"space-y-2"},E("label",{className:"flex items-center gap-3 p-2.5 rounded-lg bg-zinc-900/50 border border-zinc-800 cursor-pointer hover:border-zinc-700 transition-all"},E("div",{className:"w-5 h-5 rounded flex items-center justify-center transition-all "+(wpnRemoveBg?"bg-amber-600":"bg-zinc-700"),onClick:function(e){e.preventDefault();setWpnRemoveBg(!wpnRemoveBg);}},wpnRemoveBg&&E("span",{className:"text-white text-xs"},"\u2713")),E("span",{className:"text-sm text-zinc-300"},"Remove Background")),wpnRemoveBg&&E("div",{className:"flex items-center gap-3 p-2.5 rounded-lg bg-zinc-900/50 border border-zinc-800"},E("span",{className:"text-sm text-zinc-300"},"Tolerance"),E("input",{type:"range",min:5,max:80,value:wpnBgTol,onChange:function(e){setWpnBgTol(+e.target.value)},className:"flex-1 accent-amber-500"}),E("span",{className:"text-xs font-mono text-zinc-500 w-8 text-right"},wpnBgTol)),E("div",{className:"flex items-center gap-3 p-2.5 rounded-lg bg-zinc-900/50 border border-zinc-800"},E("span",{className:"text-sm text-zinc-300"},"Size"),E("input",{type:"range",min:15,max:60,value:wpnSize,onChange:function(e){setWpnSize(+e.target.value)},className:"flex-1 accent-amber-500"}),E("span",{className:"text-xs font-mono text-zinc-500 w-8 text-right"},wpnSize+"%")),E("label",{className:"flex items-center gap-3 p-2.5 rounded-lg bg-zinc-900/50 border border-zinc-800 cursor-pointer hover:border-zinc-700 transition-all"},E("div",{className:"w-5 h-5 rounded flex items-center justify-center transition-all "+(wpnShowAll?"bg-amber-600":"bg-zinc-700"),onClick:function(e){e.preventDefault();setWpnShowAll(!wpnShowAll);}},wpnShowAll&&E("span",{className:"text-white text-xs"},"\u2713")),E("span",{className:"text-sm text-zinc-300"},"Show on all animations"))),E("button",{onClick:removeWeapon,className:"w-full px-3 py-1.5 rounded-lg text-xs text-zinc-500 hover:text-red-400 hover:bg-zinc-800 transition-all"},"Remove weapon")))),
         E("div",{className:"lg:col-span-2 space-y-5"},
           E("div",null,E("label",{className:"text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2 block"},"Animation Cycles"),E("div",{className:"grid grid-cols-2 sm:grid-cols-4 gap-2"},Object.entries(ANIMATIONS).map(function(en){var k=en[0],a=en[1];return E("button",{key:k,onClick:function(){toggleAnim(k)},className:"p-3 rounded-xl text-left transition-all border "+(selectedAnims.includes(k)?"bg-violet-600/15 border-violet-500/50 shadow-lg shadow-violet-600/10":"bg-zinc-900/50 border-zinc-800 hover:border-zinc-700")},E("div",{className:"text-sm font-semibold text-zinc-200"},a.label),E("div",{className:"text-xs text-zinc-500 mt-0.5"},a.desc));}))),
           spriteSheet&&E("div",{className:"space-y-4"},
