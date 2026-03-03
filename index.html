@@ -310,8 +310,35 @@ function drawShadow(ctx,size){ctx.save();ctx.beginPath();ctx.ellipse(size/2,size
 function drawSpark(ctx,x,y,r,a){ctx.save();ctx.globalAlpha=a;ctx.strokeStyle='#fff';ctx.lineWidth=2;for(var i=0;i<6;i++){var an=(i/6)*Math.PI*2;ctx.beginPath();ctx.moveTo(x+Math.cos(an)*r*0.25,y+Math.sin(an)*r*0.25);ctx.lineTo(x+Math.cos(an)*r,y+Math.sin(an)*r);ctx.stroke();}ctx.restore();}
 
 
+function drawWeapon(ctx, wpn, bd, size, pose, position) {
+  if(!wpn||!wpn.img) return;
+  var wi=wpn.img, ar=wi.width/Math.max(wi.height,1);
+  var ws=size*0.3, ww=ws*ar, wh=ws;
+  if(position==="back"){
+    var tP=pose.torso||{};
+    ctx.save();
+    ctx.translate(size*0.38+(tP.ox||0)*0.3, size*0.38+(tP.oy||0)*0.3+(pose.by||0));
+    ctx.rotate(-0.6+(tP.rot||0)*0.3);
+    ctx.globalAlpha=0.85;
+    ctx.drawImage(wi,-ww*0.35,-wh*0.35,ww*0.7,wh*0.7);
+    ctx.restore();
+  } else {
+    var aRot=pose.rightArm?pose.rightArm.rot||0:0;
+    var lm=bd?bd.landmarks:null;
+    var sY=lm?lm.shoulderY*size:size*0.3;
+    var aLen=lm?(lm.hipY-lm.shoulderY)*size*0.85:size*0.25;
+    var pX=size*0.42+(pose.bx||0), pY=sY+(pose.by||0);
+    var hX=pX+Math.sin(aRot)*aLen, hY=pY+Math.cos(aRot)*aLen;
+    ctx.save();
+    ctx.translate(hX,hY);
+    ctx.rotate(aRot);
+    ctx.drawImage(wi,-ww*0.3,-wh*0.8,ww,wh);
+    ctx.restore();
+  }
+}
+
 var ANIMATIONS = {
-  idle: { label:"Idle", desc:"Breathing & weight shift", generate: function(ctx,img,f,tot,sz,bd) {
+  idle: { label:"Idle", desc:"Breathing & weight shift", generate: function(ctx,img,f,tot,sz,bd,wpn) {
     var t=(f/tot)*Math.PI*2;
     var breathe=Math.sin(t), shift=Math.sin(t*0.5);
     var pose = {
@@ -324,8 +351,9 @@ var ANIMATIONS = {
       by:breathe*-1
     };
     if(bd) drawAnimChar(ctx,bd,sz,pose); else drawCharFallback(ctx,img,sz,pose);
+    if(wpn&&wpn.showAll) drawWeapon(ctx,wpn,bd,sz,pose,wpn.position);
   }},
-  run: { label:"Run", desc:"Full sprint cycle", generate: function(ctx,img,f,tot,sz,bd) {
+  run: { label:"Run", desc:"Full sprint cycle", generate: function(ctx,img,f,tot,sz,bd,wpn) {
     var t=(f/tot)*Math.PI*2;
     var contactPhase=Math.cos(t*2);
     var bounce=(-Math.abs(Math.sin(t))*0.04+(contactPhase>0.5?-0.015:0))*sz;
@@ -342,9 +370,10 @@ var ANIMATIONS = {
       by:bounce
     };
     if(bd) drawAnimChar(ctx,bd,sz,pose); else drawCharFallback(ctx,img,sz,pose);
+    if(wpn&&wpn.showAll) drawWeapon(ctx,wpn,bd,sz,pose,wpn.position);
     if(Math.abs(Math.sin(t))>0.92) drawDust(ctx,sz/2+Math.sin(t)*6,sz*0.88+bounce,5,sz*0.06,0.35,sz*0.01);
   }},
-  walk: { label:"Walk", desc:"Natural walking gait", generate: function(ctx,img,f,tot,sz,bd) {
+  walk: { label:"Walk", desc:"Natural walking gait", generate: function(ctx,img,f,tot,sz,bd,wpn) {
     var t=(f/tot)*Math.PI*2;
     var bounce=Math.sin(t*2+Math.PI/2)*sz*0.012;
     var hipSway=Math.sin(t)*sz*0.008;
@@ -359,8 +388,9 @@ var ANIMATIONS = {
       by:bounce
     };
     if(bd) drawAnimChar(ctx,bd,sz,pose); else drawCharFallback(ctx,img,sz,pose);
+    if(wpn&&wpn.showAll) drawWeapon(ctx,wpn,bd,sz,pose,wpn.position);
   }},
-  jump: { label:"Jump", desc:"Squat, launch, peak, land", linear:true, generate: function(ctx,img,f,tot,sz,bd) {
+  jump: { label:"Jump", desc:"Squat, launch, peak, land", linear:true, generate: function(ctx,img,f,tot,sz,bd,wpn) {
     var t=f/Math.max(tot-1,1);
     var arc=-Math.sin(t*Math.PI)*sz*0.24;
     var p={head:{},torso:{},leftArm:{},rightArm:{},leftLeg:{},rightLeg:{},by:arc};
@@ -370,6 +400,7 @@ var ANIMATIONS = {
     else if(t<0.82){var q=(t-0.65)/0.17; p.leftLeg={rot:-q*0.2}; p.rightLeg={rot:q*0.2}; p.leftArm={rot:-0.8+q*0.5}; p.rightArm={rot:0.8-q*0.5}; p.head={rot:q*0.04};}
     else{var q=(t-0.82)/0.18,imp=Math.sin(q*Math.PI*0.5); p.torso={rot:imp*0.1,oy:imp*sz*0.03}; p.leftLeg={rot:imp*0.4}; p.rightLeg={rot:-imp*0.4}; p.leftArm={rot:imp*0.3}; p.rightArm={rot:-imp*0.3}; p.head={rot:-imp*0.05};}
     if(bd) drawAnimChar(ctx,bd,sz,p); else drawCharFallback(ctx,img,sz,p);
+    if(wpn&&wpn.showAll) drawWeapon(ctx,wpn,bd,sz,p,wpn.position);
     if(t>0.85){var q2=(t-0.85)/0.15; drawDust(ctx,sz/2,sz*0.88+arc,4+Math.floor(q2*6),sz*0.1*q2,0.35*q2,sz*0.012);}
   }},
   attack: { label:"Attack", desc:"Weapon attack", generate: function(ctx,img,f,tot,sz,bd,wpn) {
@@ -392,10 +423,10 @@ var ANIMATIONS = {
       else{var q=(t-0.55)/0.45,e=1-Math.pow(1-q,3); p.torso={rot:0.28*(1-e)}; p.rightArm={rot:1.7*(1-e)}; p.leftArm={rot:-0.3*(1-e)}; p.rightLeg={rot:0.15*(1-e)}; p.leftLeg={rot:0.05*(1-e)}; p.head={rot:0.12*(1-e)};}
     }
     if(bd) drawAnimChar(ctx,bd,sz,p); else drawCharFallback(ctx,img,sz,p);
-    if(wpn&&wpn.img){var ws=sz*0.32,wi=wpn.img,ar=wi.width/Math.max(wi.height,1),ww=ws*ar,wh=ws,aRot=p.rightArm?p.rightArm.rot||0:0;ctx.save();ctx.translate(sz*0.62,sz*0.32);ctx.rotate(aRot*0.7);ctx.drawImage(wi,-ww*0.2,-wh*0.5,ww,wh);ctx.restore();}
+    if(wpn&&wpn.img) drawWeapon(ctx,wpn,bd,sz,p,wpn.position||"hand");
 
   }},
-  death: { label:"Death", desc:"Fall backward", linear:true, generate: function(ctx,img,f,tot,sz,bd) {
+  death: { label:"Death", desc:"Fall backward", linear:true, generate: function(ctx,img,f,tot,sz,bd,wpn) {
     var t=f/Math.max(tot-1,1);
     var p={head:{},torso:{},leftArm:{},rightArm:{},leftLeg:{},rightLeg:{},by:0,alpha:1};
     if(t<0.12){var q=t/0.12; p.head={rot:q*0.12}; p.torso={rot:q*0.06}; p.leftArm={rot:-q*0.2}; p.rightArm={rot:q*0.15};}
@@ -403,18 +434,20 @@ var ANIMATIONS = {
     else if(t<0.75){var q=(t-0.35)/0.4,e=1-Math.pow(1-q,2); p.torso={rot:-(0.18+e*0.8),ox:-(sz*0.03+e*sz*0.08)}; p.head={rot:-(0.27+e*0.9),ox:-(sz*0.04+e*sz*0.1)}; p.leftLeg={rot:-0.4+e*0.7}; p.rightLeg={rot:0.35-e*0.5}; p.leftArm={rot:-0.7-e*0.6-Math.sin(q*5)*0.06}; p.rightArm={rot:0.55+e*0.5}; p.by=sz*0.03+e*sz*0.1; p.alpha=1-e*0.25;}
     else{var q=(t-0.75)/0.25; p.torso={rot:-(0.98+q*0.04),ox:-sz*0.11}; p.head={rot:-(1.17+q*0.03),ox:-sz*0.14}; p.leftLeg={rot:0.3+q*0.05}; p.rightLeg={rot:-0.15}; p.leftArm={rot:-1.3}; p.rightArm={rot:1.05}; p.by=sz*0.13; p.alpha=0.75-q*0.4;}
     if(bd) drawAnimChar(ctx,bd,sz,p); else drawCharFallback(ctx,img,sz,p);
+    if(wpn&&wpn.showAll) drawWeapon(ctx,wpn,bd,sz,p,wpn.position);
     if(t>0.3) drawDust(ctx,sz/2-(t-0.3)*sz*0.12,sz*0.88+p.by,3+Math.floor(t*5),sz*0.07*t,0.2,sz*0.01);
   }},
-  hit: { label:"Hit/Hurt", desc:"Impact & stagger", generate: function(ctx,img,f,tot,sz,bd) {
+  hit: { label:"Hit/Hurt", desc:"Impact & stagger", generate: function(ctx,img,f,tot,sz,bd,wpn) {
     var t=f/Math.max(tot-1,1);
     var p={head:{},torso:{},leftArm:{},rightArm:{},leftLeg:{},rightLeg:{},bx:0};
     if(t<0.12){var q=t/0.12,sn=q*q; p.head={rot:-sn*0.25,ox:-sn*sz*0.04}; p.torso={rot:-sn*0.15,ox:-sn*sz*0.03}; p.leftArm={rot:sn*0.7}; p.rightArm={rot:-sn*0.8}; p.leftLeg={rot:-sn*0.12}; p.rightLeg={rot:sn*0.1}; p.bx=-sn*sz*0.05;}
     else if(t<0.35){var q=(t-0.12)/0.23,sh=Math.sin(q*Math.PI*5)*sz*0.02*(1-q); p.head={rot:-0.25+q*0.1,ox:-sz*0.04+q*sz*0.015+sh}; p.torso={rot:-0.15+q*0.06,ox:-sz*0.03+q*sz*0.01+sh*0.7}; p.leftArm={rot:0.7-q*0.2}; p.rightArm={rot:-0.8+q*0.25}; p.leftLeg={rot:-0.12+q*0.05}; p.rightLeg={rot:0.1-q*0.04}; p.bx=-sz*0.05+q*sz*0.02+sh;}
     else{var q=(t-0.35)/0.65,e=1-Math.pow(1-q,2),ov=Math.sin(q*Math.PI)*0.04; p.head={rot:(-0.15+ov)*(1-e)}; p.torso={rot:(-0.09+ov)*(1-e)}; p.leftArm={rot:0.5*(1-e)}; p.rightArm={rot:-0.55*(1-e)}; p.leftLeg={rot:-0.07*(1-e)}; p.rightLeg={rot:0.06*(1-e)}; p.bx=-sz*0.03*(1-e);}
     if(bd) drawAnimChar(ctx,bd,sz,p); else drawCharFallback(ctx,img,sz,p);
+    if(wpn&&wpn.showAll) drawWeapon(ctx,wpn,bd,sz,p,wpn.position);
 
   }},
-  spin: { label:"Spin", desc:"Full 360 rotation", generate: function(ctx,img,f,tot,sz,bd) {
+  spin: { label:"Spin", desc:"Full 360 rotation", generate: function(ctx,img,f,tot,sz,bd,wpn) {
     var t=(f/tot)*Math.PI*2;
     var scaleX=Math.cos(t);
     var absX=Math.abs(scaleX);
@@ -532,6 +565,12 @@ function App(){
   var _wpnImg=useState(null),weaponImage=_wpnImg[0],setWeaponImage=_wpnImg[1];
   var _wpnEl=useState(null),weaponImgEl=_wpnEl[0],setWeaponImgEl=_wpnEl[1];
   var _wpnType=useState(""),weaponType=_wpnType[0],setWeaponType=_wpnType[1];
+  var _wpnPanel=useState(false),showWpnPanel=_wpnPanel[0],setShowWpnPanel=_wpnPanel[1];
+  var _wpnRmBg=useState(false),wpnRemoveBg=_wpnRmBg[0],setWpnRemoveBg=_wpnRmBg[1];
+  var _wpnTol=useState(35),wpnBgTol=_wpnTol[0],setWpnBgTol=_wpnTol[1];
+  var _wpnAll=useState(false),wpnShowAll=_wpnAll[0],setWpnShowAll=_wpnAll[1];
+  var _wpnPos=useState("hand"),wpnPosition=_wpnPos[0],setWpnPosition=_wpnPos[1];
+  var _wpnRaw=useState(null),wpnRawImg=_wpnRaw[0],setWpnRawImg=_wpnRaw[1];
 
   var handleUpload=useCallback(function(e){
     var file=(e.target.files||[])[0]; if(!file)return;
@@ -547,10 +586,10 @@ function App(){
   var handleWeaponUpload=useCallback(function(e){
     var file=(e.target.files||[])[0]; if(!file)return;
     var url=URL.createObjectURL(file); setWeaponImage(url);
-    var wimg=new Image(); wimg.onload=function(){setWeaponImgEl(wimg);}; wimg.src=url;
+    var wimg=new Image(); wimg.onload=function(){setWpnRawImg(wimg);setWeaponImgEl(wimg);}; wimg.src=url;
     if(!weaponType) setWeaponType("melee");
   },[weaponType]);
-  var removeWeapon=useCallback(function(){setWeaponImage(null);setWeaponImgEl(null);setWeaponType("");},[]);
+  var removeWeapon=useCallback(function(){setWeaponImage(null);setWeaponImgEl(null);setWeaponType("");setWpnRawImg(null);setWpnRemoveBg(false);setWpnShowAll(false);},[]);
   var toggleAnim=function(key){setSelectedAnims([key]);};
 
   useEffect(function(){
@@ -565,6 +604,18 @@ function App(){
       }catch(e){setImgEl(rawImg);setRemoving(false);}
     },50);
   },[rawImg,removeBg,bgTolerance]);
+
+  useEffect(function(){
+    if(!wpnRawImg) return;
+    if(!wpnRemoveBg){setWeaponImgEl(wpnRawImg); return;}
+    setTimeout(function(){
+      try{
+        var result=removeBackground(wpnRawImg, wpnBgTol);
+        if(result.complete&&result.naturalWidth>0){setWeaponImgEl(result);}
+        else{result.onload=function(){setWeaponImgEl(result);};}
+      }catch(e){setWeaponImgEl(wpnRawImg);}
+    },50);
+  },[wpnRawImg,wpnRemoveBg,wpnBgTol]);
 
   // Body part extraction - BodyPix auto, Claude manual only
   useEffect(function(){
@@ -644,7 +695,7 @@ function App(){
             ox.save(); ox.translate(padding,padding);
             if(addShadow) drawShadow(ox,charSize);
             var m=anim.linear?{frame:f,total:frameCount}:getPingPong(f,frameCount);
-            var wpnData=weaponImgEl?{img:weaponImgEl,type:weaponType||"melee"}:null; anim.generate(ox,fitted,m.frame,m.total,charSize,fBD,wpnData);
+            var wpnData=weaponImgEl?{img:weaponImgEl,type:weaponType||"melee",showAll:wpnShowAll,position:wpnPosition}:null; anim.generate(ox,fitted,m.frame,m.total,charSize,fBD,wpnData);
             ox.restore(); ctx.drawImage(oc,f*cs,row*cs);
           }
         });
@@ -653,7 +704,7 @@ function App(){
       }catch(e){console.error("Gen:",e);}
     };
     if(fitted.complete) doGen(); else fitted.onload=doGen;
-  },[imgEl,selectedAnims,frameCount,charSize,addShadow,padding,fitImage,fitBodyData,bodyData,weaponImgEl,weaponType]);
+  },[imgEl,selectedAnims,frameCount,charSize,addShadow,padding,fitImage,fitBodyData,bodyData,weaponImgEl,weaponType,wpnShowAll,wpnPosition,wpnRemoveBg,wpnBgTol]);
 
   useEffect(function(){
     if(!spriteSheet||!previewAnim||!playing)return;
@@ -684,7 +735,7 @@ function App(){
   return E("div",{className:"min-h-screen bg-zinc-950 text-zinc-100 p-4 md:p-8"},
     E("div",{className:"max-w-6xl mx-auto"},
       E("div",{className:"mb-8"},E("h1",{className:"text-3xl font-bold tracking-tight bg-gradient-to-r from-violet-400 to-amber-300 bg-clip-text text-transparent"},"Sprite Sheet Generator"),E("p",{className:"text-zinc-500 text-sm mt-1"},"Upload character \u2192 AI body segmentation \u2192 per-pixel body parts \u2192 animated sprite sheet")),
-      E("div",{className:"grid grid-cols-1 lg:grid-cols-4 gap-6"},
+      E("div",{className:"grid grid-cols-1 lg:grid-cols-3 gap-6"},
         E("div",{className:"lg:col-span-1 space-y-5"},
           E("div",{onDrop:handleDrop,onDragOver:function(e){e.preventDefault()},onClick:function(){fileInputRef.current&&fileInputRef.current.click()},className:"border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-all "+(image?"border-violet-500/50 bg-violet-500/5":"border-zinc-700 hover:border-zinc-500 bg-zinc-900/50")},
             E("input",{ref:fileInputRef,type:"file",accept:"image/*",onChange:handleUpload,className:"hidden"}),
@@ -695,7 +746,8 @@ function App(){
             E("label",{key:"rmbg",className:"flex items-center gap-3 p-2.5 rounded-lg bg-zinc-900/50 border border-zinc-800 cursor-pointer hover:border-zinc-700 transition-all"},E("div",{className:"w-5 h-5 rounded flex items-center justify-center transition-all "+(removeBg?"bg-violet-600":"bg-zinc-700"),onClick:function(e){e.preventDefault();setRemoveBg(!removeBg);}},removeBg&&E("span",{className:"text-white text-xs"},"\u2713")),E("span",{className:"text-sm text-zinc-300"},removing?"Removing BG...":"Remove Background")),
             removeBg&&E("div",{className:"flex items-center gap-3 p-2.5 rounded-lg bg-zinc-900/50 border border-zinc-800"},E("span",{className:"text-sm text-zinc-300"},"Tolerance"),E("input",{type:"range",min:5,max:80,value:bgTolerance,onChange:function(e){setBgTolerance(+e.target.value)},className:"flex-1 accent-violet-500"}),E("span",{className:"text-xs font-mono text-zinc-500 w-8 text-right"},bgTolerance)),
             E("div",{className:"flex items-center gap-3 p-2.5 rounded-lg bg-zinc-900/50 border border-zinc-800"},E("span",{className:"text-sm text-zinc-300"},"Padding"),E("input",{type:"range",min:0,max:16,value:padding,onChange:function(e){setPadding(+e.target.value)},className:"flex-1 accent-violet-500"}),E("span",{className:"text-xs font-mono text-zinc-500 w-8 text-right"},padding+"px"))))),
-        E("div",{className:"space-y-5"},E("div",null,E("label",{className:"text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2 block"},"Weapon (optional)"),E("div",{onClick:function(){weaponInputRef.current&&weaponInputRef.current.click()},className:"border-2 border-dashed rounded-xl p-4 text-center cursor-pointer transition-all "+(weaponImage?"border-amber-500/50 bg-amber-500/5":"border-zinc-700 hover:border-zinc-500 bg-zinc-900/50")},E("input",{ref:weaponInputRef,type:"file",accept:"image/*",onChange:handleWeaponUpload,className:"hidden"}),weaponImage?E("div",{className:"flex flex-col items-center gap-2"},E("img",{src:weaponImage,className:"max-h-16 max-w-16 object-contain"}),E("span",{className:"text-xs text-zinc-400"},"Click to change")):E("div",null,E("div",{className:"text-2xl mb-1 opacity-40"},"\u2694"),E("p",{className:"text-xs text-zinc-400"},"Upload weapon image"))),weaponImage&&E("div",{className:"mt-3 space-y-2"},E("div",{className:"flex gap-2"},E("button",{onClick:function(){setWeaponType("melee")},className:"flex-1 px-3 py-2 rounded-lg text-sm font-semibold transition-all "+(weaponType==="melee"?"bg-amber-600 text-white shadow-lg":"bg-zinc-800 text-zinc-400 hover:bg-zinc-700")},"\u2694 Melee"),E("button",{onClick:function(){setWeaponType("gun")},className:"flex-1 px-3 py-2 rounded-lg text-sm font-semibold transition-all "+(weaponType==="gun"?"bg-amber-600 text-white shadow-lg":"bg-zinc-800 text-zinc-400 hover:bg-zinc-700")},"\uD83D\uDD2B Gun")),E("button",{onClick:removeWeapon,className:"w-full px-3 py-1.5 rounded-lg text-xs text-zinc-500 hover:text-red-400 hover:bg-zinc-800 transition-all"},"Remove weapon")))),
+          E("button",{onClick:function(){setShowWpnPanel(!showWpnPanel)},className:"w-full px-4 py-2.5 rounded-xl text-sm font-semibold transition-all border "+(showWpnPanel?"bg-amber-600/15 border-amber-500/50 text-amber-300":"bg-zinc-900/50 border-zinc-800 text-zinc-400 hover:border-zinc-700")},showWpnPanel?"\u2694 Hide Weapon":"\u2694 Add Weapon"),
+          showWpnPanel&&E("div",{className:"space-y-3 p-3 rounded-xl border border-amber-500/20 bg-amber-500/5"},E("div",{onClick:function(){weaponInputRef.current&&weaponInputRef.current.click()},className:"border-2 border-dashed rounded-lg p-3 text-center cursor-pointer transition-all "+(weaponImage?"border-amber-500/50":"border-zinc-700 hover:border-zinc-500 bg-zinc-900/50")},E("input",{ref:weaponInputRef,type:"file",accept:"image/*",onChange:handleWeaponUpload,className:"hidden"}),weaponImage?E("div",{className:"flex flex-col items-center gap-2"},E("img",{src:weaponImage,className:"max-h-14 max-w-14 object-contain"}),E("span",{className:"text-xs text-zinc-400"},"Click to change")):E("div",null,E("div",{className:"text-xl mb-1 opacity-40"},"\u2694"),E("p",{className:"text-xs text-zinc-400"},"Upload weapon"))),weaponImage&&E("div",{className:"space-y-2"},E("div",{className:"flex gap-2"},E("button",{onClick:function(){setWeaponType("melee")},className:"flex-1 px-2 py-1.5 rounded-lg text-xs font-semibold "+(weaponType==="melee"?"bg-amber-600 text-white":"bg-zinc-800 text-zinc-400")},"Melee"),E("button",{onClick:function(){setWeaponType("gun")},className:"flex-1 px-2 py-1.5 rounded-lg text-xs font-semibold "+(weaponType==="gun"?"bg-amber-600 text-white":"bg-zinc-800 text-zinc-400")},"Gun")),E("label",{className:"flex items-center gap-2 text-xs text-zinc-300 cursor-pointer"},E("div",{className:"w-4 h-4 rounded flex items-center justify-center "+(wpnRemoveBg?"bg-amber-600":"bg-zinc-700"),onClick:function(e){e.preventDefault();setWpnRemoveBg(!wpnRemoveBg);}},wpnRemoveBg&&E("span",{className:"text-white text-[10px]"},"\u2713")),"Remove BG"),wpnRemoveBg&&E("div",{className:"flex items-center gap-2"},E("span",{className:"text-[10px] text-zinc-500"},"Tol"),E("input",{type:"range",min:5,max:80,value:wpnBgTol,onChange:function(e){setWpnBgTol(+e.target.value)},className:"flex-1 accent-amber-500"}),E("span",{className:"text-[10px] font-mono text-zinc-500"},wpnBgTol)),E("label",{className:"flex items-center gap-2 text-xs text-zinc-300 cursor-pointer"},E("div",{className:"w-4 h-4 rounded flex items-center justify-center "+(wpnShowAll?"bg-amber-600":"bg-zinc-700"),onClick:function(e){e.preventDefault();setWpnShowAll(!wpnShowAll);}},wpnShowAll&&E("span",{className:"text-white text-[10px]"},"\u2713")),"Show on all anims"),wpnShowAll&&E("div",{className:"flex gap-2"},E("button",{onClick:function(){setWpnPosition("hand")},className:"flex-1 px-2 py-1 rounded text-[10px] font-semibold "+(wpnPosition==="hand"?"bg-amber-600 text-white":"bg-zinc-800 text-zinc-400")},"\u270B Hand"),E("button",{onClick:function(){setWpnPosition("back")},className:"flex-1 px-2 py-1 rounded text-[10px] font-semibold "+(wpnPosition==="back"?"bg-amber-600 text-white":"bg-zinc-800 text-zinc-400")},"\uD83C\uDF92 Back")),E("button",{onClick:removeWeapon,className:"w-full px-2 py-1 rounded text-[10px] text-zinc-500 hover:text-red-400"},"Remove weapon"))),
         E("div",{className:"lg:col-span-2 space-y-5"},
           E("div",null,E("label",{className:"text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2 block"},"Animation Cycles"),E("div",{className:"grid grid-cols-2 sm:grid-cols-4 gap-2"},Object.entries(ANIMATIONS).map(function(en){var k=en[0],a=en[1];return E("button",{key:k,onClick:function(){toggleAnim(k)},className:"p-3 rounded-xl text-left transition-all border "+(selectedAnims.includes(k)?"bg-violet-600/15 border-violet-500/50 shadow-lg shadow-violet-600/10":"bg-zinc-900/50 border-zinc-800 hover:border-zinc-700")},E("div",{className:"text-sm font-semibold text-zinc-200"},a.label),E("div",{className:"text-xs text-zinc-500 mt-0.5"},a.desc));}))),
           spriteSheet&&E("div",{className:"space-y-4"},
