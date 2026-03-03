@@ -544,11 +544,12 @@ var FRAME_OPTIONS=[2,3,4,6,8,10,12,16];
 function getPingPong(fi,tf){var uc=Math.ceil((tf+1)/2);return{frame:fi<uc?fi:tf-fi,total:uc};}
 
 
-function svgIcon(paths,vb){vb=vb||"0 0 24 24";return E("svg",{width:14,height:14,viewBox:vb,fill:"none",stroke:"currentColor",strokeWidth:2,strokeLinecap:"round",strokeLinejoin:"round",style:{display:"inline-block",verticalAlign:"middle",marginRight:"4px"}},paths);}
-function iconSword(){return svgIcon([E("path",{key:"b",d:"M14.5 17.5L3 6V3h3l11.5 11.5",strokeWidth:1.8}),E("path",{key:"g",d:"M13 19l6-6",strokeWidth:1.8}),E("path",{key:"h",d:"M16 16l4 4",strokeWidth:1.8})]);}
-function iconGun(){return svgIcon([E("path",{key:"a",d:"M4 15l3-3h6l2 2v6l-3-3",strokeWidth:1.8}),E("path",{key:"b",d:"M13 12l8-8",strokeWidth:1.8}),E("circle",{key:"c",cx:20,cy:5,r:1.5,fill:"currentColor",stroke:"none"})]);}
-function iconHand(){return svgIcon([E("path",{key:"a",d:"M12 22c-4 0-7-2-7-6v-4l2-1v3",strokeWidth:1.8}),E("path",{key:"b",d:"M7 11V5.5a1.5 1.5 0 013 0V11",strokeWidth:1.8}),E("path",{key:"c",d:"M10 10.5V4.5a1.5 1.5 0 013 0V10.5",strokeWidth:1.8}),E("path",{key:"d",d:"M13 11V5.5a1.5 1.5 0 013 0V12",strokeWidth:1.8}),E("path",{key:"e",d:"M16 12V9a1.5 1.5 0 013 0v7c0 4-3 6-7 6",strokeWidth:1.8})]);}
-function iconBack(){return svgIcon([E("rect",{key:"a",x:5,y:4,width:14,height:16,rx:2,strokeWidth:1.8}),E("path",{key:"b",d:"M9 4V2",strokeWidth:1.8}),E("path",{key:"c",d:"M15 4V2",strokeWidth:1.8}),E("path",{key:"d",d:"M9 13h6",strokeWidth:1.8}),E("path",{key:"e",d:"M9 9h6",strokeWidth:1.8})]);}
+var _E=React.createElement;
+function svgIcon(paths,vb){vb=vb||"0 0 24 24";return _E("svg",{width:14,height:14,viewBox:vb,fill:"none",stroke:"currentColor",strokeWidth:2,strokeLinecap:"round",strokeLinejoin:"round",style:{display:"inline-block",verticalAlign:"middle",marginRight:"4px"}},paths);}
+function iconSword(){return svgIcon([_E("path",{key:"b",d:"M14.5 17.5L3 6V3h3l11.5 11.5",strokeWidth:1.8}),_E("path",{key:"g",d:"M13 19l6-6",strokeWidth:1.8}),_E("path",{key:"h",d:"M16 16l4 4",strokeWidth:1.8})]);}
+function iconGun(){return svgIcon([_E("path",{key:"a",d:"M4 15l3-3h6l2 2v6l-3-3",strokeWidth:1.8}),_E("path",{key:"b",d:"M13 12l8-8",strokeWidth:1.8}),_E("circle",{key:"c",cx:20,cy:5,r:1.5,fill:"currentColor",stroke:"none"})]);}
+function iconHand(){return svgIcon([_E("path",{key:"a",d:"M12 22c-4 0-7-2-7-6v-4l2-1v3",strokeWidth:1.8}),_E("path",{key:"b",d:"M7 11V5.5a1.5 1.5 0 013 0V11",strokeWidth:1.8}),_E("path",{key:"c",d:"M10 10.5V4.5a1.5 1.5 0 013 0V10.5",strokeWidth:1.8}),_E("path",{key:"d",d:"M13 11V5.5a1.5 1.5 0 013 0V12",strokeWidth:1.8}),_E("path",{key:"e",d:"M16 12V9a1.5 1.5 0 013 0v7c0 4-3 6-7 6",strokeWidth:1.8})]);}
+function iconBack(){return svgIcon([_E("rect",{key:"a",x:5,y:4,width:14,height:16,rx:2,strokeWidth:1.8}),_E("path",{key:"b",d:"M9 4V2",strokeWidth:1.8}),_E("path",{key:"c",d:"M15 4V2",strokeWidth:1.8}),_E("path",{key:"d",d:"M9 13h6",strokeWidth:1.8}),_E("path",{key:"e",d:"M9 9h6",strokeWidth:1.8})]);}
 function App(){
   var _img=useState(null),image=_img[0],setImage=_img[1];
   var _raw=useState(null),rawImg=_raw[0],setRawImg=_raw[1];
