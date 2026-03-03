@@ -72,9 +72,9 @@ async function detectPose(img) {
 
 
 // ============================================================
-// BODY PART EXTRACTOR
-// Uses AI pose keypoints (if available) or silhouette heuristics
-// Assigns every opaque pixel to a body part, extracts masked canvases
+// BODY PART EXTRACTOR - Soft Weighted Masks
+// Each pixel gets smooth influence weights from all body parts
+// No hard cuts - parts blend at boundaries
 // ============================================================
 function extractBodyParts(img, poseData) {
   var c = document.createElement("canvas");
@@ -92,7 +92,7 @@ function extractBodyParts(img, poseData) {
     for (var x=0;x<w;x++) {
       if(d[(y*w+x)*4+3]>30){if(left<0)left=x;right=x;count++;}
     }
-    rows.push({left:left,right:right,width:left>=0?right-left+1:0,count:count,cx:left>=0?(left+right)/2:w/2});
+    rows.push({left:left,right:right,width:left>=0?right-left+1:0,cx:left>=0?(left+right)/2:w/2});
   }
   var topY=0,botY=h-1;
   for(var y2=0;y2<h;y2++){if(rows[y2].width>0){topY=y2;break;}}
@@ -100,7 +100,7 @@ function extractBodyParts(img, poseData) {
   var charH=botY-topY+1;
   if(charH<8) return null;
 
-  // Determine joint positions - from AI or heuristic
+  // Get joint positions from AI or heuristics
   var joints = {};
   var aiUsed = false;
 
@@ -109,194 +109,154 @@ function extractBodyParts(img, poseData) {
     var conf = function(i){return kps[i].score > 0.1;};
     var kx = function(i){return kps[i].x;};
     var ky = function(i){return kps[i].y;};
-
-    // Head top: above nose by distance from nose to shoulder
     var noseY = conf(KP.NOSE) ? ky(KP.NOSE) : topY;
-    var headTop = Math.max(topY, noseY - (ky(KP.L_SHOULDER) - noseY) * 0.8);
-
-    // Neck: midpoint between shoulders, slightly up
-    var neckX = (conf(KP.L_SHOULDER)&&conf(KP.R_SHOULDER)) ? (kx(KP.L_SHOULDER)+kx(KP.R_SHOULDER))/2 : w/2;
-    var neckY = (conf(KP.L_SHOULDER)&&conf(KP.R_SHOULDER)) ? Math.min(ky(KP.L_SHOULDER),ky(KP.R_SHOULDER))-charH*0.02 : topY+charH*0.28;
-
-    joints.headTop = headTop;
-    joints.neckX = neckX;
-    joints.neckY = neckY;
-    joints.lShoulder = conf(KP.L_SHOULDER) ? {x:kx(KP.L_SHOULDER),y:ky(KP.L_SHOULDER)} : {x:w*0.35,y:topY+charH*0.28};
-    joints.rShoulder = conf(KP.R_SHOULDER) ? {x:kx(KP.R_SHOULDER),y:ky(KP.R_SHOULDER)} : {x:w*0.65,y:topY+charH*0.28};
-    joints.lElbow = conf(KP.L_ELBOW) ? {x:kx(KP.L_ELBOW),y:ky(KP.L_ELBOW)} : null;
-    joints.rElbow = conf(KP.R_ELBOW) ? {x:kx(KP.R_ELBOW),y:ky(KP.R_ELBOW)} : null;
-    joints.lWrist = conf(KP.L_WRIST) ? {x:kx(KP.L_WRIST),y:ky(KP.L_WRIST)} : null;
-    joints.rWrist = conf(KP.R_WRIST) ? {x:kx(KP.R_WRIST),y:ky(KP.R_WRIST)} : null;
-    joints.lHip = conf(KP.L_HIP) ? {x:kx(KP.L_HIP),y:ky(KP.L_HIP)} : {x:w*0.4,y:topY+charH*0.55};
-    joints.rHip = conf(KP.R_HIP) ? {x:kx(KP.R_HIP),y:ky(KP.R_HIP)} : {x:w*0.6,y:topY+charH*0.55};
-    joints.lKnee = conf(KP.L_KNEE) ? {x:kx(KP.L_KNEE),y:ky(KP.L_KNEE)} : null;
-    joints.rKnee = conf(KP.R_KNEE) ? {x:kx(KP.R_KNEE),y:ky(KP.R_KNEE)} : null;
-    joints.lAnkle = conf(KP.L_ANKLE) ? {x:kx(KP.L_ANKLE),y:ky(KP.L_ANKLE)} : null;
-    joints.rAnkle = conf(KP.R_ANKLE) ? {x:kx(KP.R_ANKLE),y:ky(KP.R_ANKLE)} : null;
-
-    // Crotch point: midpoint between hips
-    joints.crotchY = (joints.lHip.y + joints.rHip.y) / 2;
-    joints.crotchX = (joints.lHip.x + joints.rHip.x) / 2;
+    joints.neckX = (conf(KP.L_SHOULDER)&&conf(KP.R_SHOULDER)) ? (kx(KP.L_SHOULDER)+kx(KP.R_SHOULDER))/2 : w/2;
+    joints.neckY = (conf(KP.L_SHOULDER)&&conf(KP.R_SHOULDER)) ? Math.min(ky(KP.L_SHOULDER),ky(KP.R_SHOULDER))-charH*0.02 : topY+charH*0.28;
+    joints.headTop = Math.max(topY, noseY - (joints.neckY - noseY)*0.8);
+    joints.lShoulder = conf(KP.L_SHOULDER)?{x:kx(KP.L_SHOULDER),y:ky(KP.L_SHOULDER)}:{x:w*0.35,y:topY+charH*0.28};
+    joints.rShoulder = conf(KP.R_SHOULDER)?{x:kx(KP.R_SHOULDER),y:ky(KP.R_SHOULDER)}:{x:w*0.65,y:topY+charH*0.28};
+    joints.lHip = conf(KP.L_HIP)?{x:kx(KP.L_HIP),y:ky(KP.L_HIP)}:{x:w*0.4,y:topY+charH*0.55};
+    joints.rHip = conf(KP.R_HIP)?{x:kx(KP.R_HIP),y:ky(KP.R_HIP)}:{x:w*0.6,y:topY+charH*0.55};
+    joints.lKnee = conf(KP.L_KNEE)?{x:kx(KP.L_KNEE),y:ky(KP.L_KNEE)}:null;
+    joints.rKnee = conf(KP.R_KNEE)?{x:kx(KP.R_KNEE),y:ky(KP.R_KNEE)}:null;
+    joints.crotchY = (joints.lHip.y+joints.rHip.y)/2;
+    joints.crotchX = (joints.lHip.x+joints.rHip.x)/2;
     aiUsed = true;
-    console.log("Using AI joints for body part extraction");
   } else {
-    // Heuristic fallback
     var sw=[];
     for(var i=0;i<h;i++){var sum=0,cnt=0;for(var j=Math.max(0,i-2);j<=Math.min(h-1,i+2);j++){sum+=rows[j].width;cnt++;}sw.push(sum/cnt);}
-
     var headMaxW=0,headMaxY=topY;
     for(var y4=topY;y4<topY+Math.floor(charH*0.35);y4++){if(sw[y4]>headMaxW){headMaxW=sw[y4];headMaxY=y4;}}
     var nkY=headMaxY,nkW=headMaxW;
     for(var y5=headMaxY+1;y5<topY+Math.floor(charH*0.4);y5++){if(sw[y5]<nkW&&sw[y5]>0){nkW=sw[y5];nkY=y5;}if(sw[y5]>nkW*1.3&&y5>headMaxY+2)break;}
     var shY=nkY,shW=0;
     for(var y6=topY+Math.floor(charH*0.2);y6<topY+Math.floor(charH*0.5);y6++){if(sw[y6]>shW){shW=sw[y6];shY=y6;}}
-    var waY=shY,waW=shW;
-    for(var y7=shY+1;y7<topY+Math.floor(charH*0.7);y7++){if(sw[y7]<waW&&sw[y7]>0){waW=sw[y7];waY=y7;}}
-    var hiY=waY,hiW=0;
+    var hiY=shY,hiW=0;
     for(var y8=topY+Math.floor(charH*0.4);y8<topY+Math.floor(charH*0.65);y8++){if(sw[y8]>hiW){hiW=sw[y8];hiY=y8;}}
     var crY=hiY+Math.floor((botY-hiY)*0.1);
     var ctrX=Math.round(w/2);
     for(var y9=hiY;y9<botY-2;y9++){var cc=0,cl=Math.max(0,ctrX-Math.floor(w*0.06)),cr=Math.min(w-1,ctrX+Math.floor(w*0.06));for(var x2=cl;x2<=cr;x2++){if(d[(y9*w+x2)*4+3]>30)cc++;}if(cc<(cr-cl+1)*0.35&&y9>hiY+2){crY=y9;break;}}
-
     var shRow=rows[shY];
     joints.headTop=topY; joints.neckX=shRow?shRow.cx:w/2; joints.neckY=nkY;
-    joints.lShoulder={x:shRow?shRow.left+shW*0.15:w*0.3, y:shY};
-    joints.rShoulder={x:shRow?shRow.right-shW*0.15:w*0.7, y:shY};
-    joints.lHip={x:w*0.4, y:hiY};
-    joints.rHip={x:w*0.6, y:hiY};
+    joints.lShoulder={x:shRow?shRow.left+shW*0.15:w*0.3,y:shY};
+    joints.rShoulder={x:shRow?shRow.right-shW*0.15:w*0.7,y:shY};
+    joints.lHip={x:w*0.4,y:hiY}; joints.rHip={x:w*0.6,y:hiY};
     joints.crotchY=crY; joints.crotchX=w/2;
-    console.log("Using silhouette heuristic joints");
   }
 
-  // Assign every pixel to a body part using joints
-  // Distance-based assignment with anatomical priors
-  var partMap = new Uint8Array(w * h); // 0=none,1=head,2=torso,3=lArm,4=rArm,5=lLeg,6=rLeg
+  // Define part "centers" for soft weighting
+  var shoulderMidY=(joints.lShoulder.y+joints.rShoulder.y)/2;
+  var headCy=(joints.headTop+joints.neckY)/2 || topY+charH*0.12;
+  var headCx=joints.neckX;
+  var torsoCy=(shoulderMidY+joints.crotchY)/2;
+  var torsoCx=joints.neckX;
+  var lArmCx=joints.lShoulder.x-charH*0.08;
+  var lArmCy=(joints.lShoulder.y+joints.crotchY*0.6+joints.lShoulder.y*0.4)/2;
+  var rArmCx=joints.rShoulder.x+charH*0.08;
+  var rArmCy=lArmCy;
+  var lLegCx=joints.lHip.x;
+  var lLegCy=(joints.crotchY+botY)/2;
+  var rLegCx=joints.rHip.x;
+  var rLegCy=lLegCy;
 
-  var shoulderMidY = (joints.lShoulder.y + joints.rShoulder.y) / 2;
-  var torsoWidth = Math.abs(joints.rShoulder.x - joints.lShoulder.x);
+  // Soft weight radius for each part (how far influence extends)
+  var headR=charH*0.22;
+  var torsoR=charH*0.35;
+  var armR=charH*0.28;
+  var legR=charH*0.35;
 
-  for (var py=0; py<h; py++) {
-    for (var px=0; px<w; px++) {
-      var pidx = py*w+px;
-      if (d[pidx*4+3] <= 30) continue;
-
-      // HEAD: above neck line
-      if (py <= joints.neckY + charH*0.02) {
-        partMap[pidx] = 1;
-        continue;
-      }
-
-      // LEGS: below crotch
-      if (py >= joints.crotchY - charH*0.02) {
-        // Assign left/right based on which hip joint is closer
-        var dToLHip = Math.abs(px - joints.lHip.x);
-        var dToRHip = Math.abs(px - joints.rHip.x);
-        // Also use knee/ankle if available
-        if (joints.lKnee && joints.rKnee && py > joints.crotchY + charH*0.05) {
-          var interp = Math.min(1, (py - joints.crotchY) / (botY - joints.crotchY));
-          var lTarget = joints.lKnee.x * (1-interp) + (joints.lAnkle ? joints.lAnkle.x : joints.lKnee.x) * interp;
-          var rTarget = joints.rKnee.x * (1-interp) + (joints.rAnkle ? joints.rAnkle.x : joints.rKnee.x) * interp;
-          dToLHip = Math.abs(px - lTarget);
-          dToRHip = Math.abs(px - rTarget);
-        }
-        partMap[pidx] = dToLHip <= dToRHip ? 5 : 6;
-        continue;
-      }
-
-      // TORSO/ARM zone (neck to crotch)
-      // Core torso: between shoulder joints, narrowing at waist
-      var zoneT = (py - joints.neckY) / Math.max(1, joints.crotchY - joints.neckY);
-
-      // Interpolate torso boundaries from shoulders to hips
-      var tLeftX = joints.lShoulder.x + (joints.lHip.x - joints.lShoulder.x) * zoneT;
-      var tRightX = joints.rShoulder.x + (joints.rHip.x - joints.rShoulder.x) * zoneT;
-
-      // Narrow at waist (squeeze inward 15%)
-      var waistFactor = 1 - 0.15 * Math.sin(zoneT * Math.PI);
-      var tCx = (tLeftX + tRightX) / 2;
-      var tHalfW = (tRightX - tLeftX) / 2 * waistFactor;
-      tLeftX = tCx - tHalfW;
-      tRightX = tCx + tHalfW;
-
-      if (px >= tLeftX && px <= tRightX) {
-        partMap[pidx] = 2; // torso
-      } else if (px < tLeftX) {
-        // Left arm or extended torso?
-        // If very close to boundary, blend
-        partMap[pidx] = 3; // left arm
-      } else {
-        partMap[pidx] = 4; // right arm
-      }
-    }
-  }
-
-  // Extract part canvases with overlap at joints
-  var overlapPx = Math.max(3, Math.floor(charH * 0.035));
-  var partNames = ["head","torso","leftArm","rightArm","leftLeg","rightLeg"];
-  var partIds = [1,2,3,4,5,6];
+  // For each pixel, compute weight for each part
+  // Weight = max(0, 1 - dist/radius)^2 (smooth falloff)
+  // Plus directional bias so parts stay in their zone
+  var partNames=["head","torso","leftArm","rightArm","leftLeg","rightLeg"];
+  var partCenters=[
+    {cx:headCx,cy:headCy,r:headR},
+    {cx:torsoCx,cy:torsoCy,r:torsoR},
+    {cx:lArmCx,cy:lArmCy,r:armR},
+    {cx:rArmCx,cy:rArmCy,r:armR},
+    {cx:lLegCx,cy:lLegCy,r:legR},
+    {cx:rLegCx,cy:rLegCy,r:legR}
+  ];
 
   var pivots = {
-    head: {x: joints.neckX, y: joints.neckY},
-    torso: {x: joints.neckX, y: (shoulderMidY + joints.crotchY)/2},
-    leftArm: {x: joints.lShoulder.x, y: joints.lShoulder.y},
-    rightArm: {x: joints.rShoulder.x, y: joints.rShoulder.y},
-    leftLeg: {x: joints.lHip.x, y: joints.crotchY},
-    rightLeg: {x: joints.rHip.x, y: joints.crotchY}
+    head:{x:joints.neckX, y:joints.neckY},
+    torso:{x:joints.neckX, y:(shoulderMidY+joints.crotchY)/2},
+    leftArm:{x:joints.lShoulder.x, y:joints.lShoulder.y},
+    rightArm:{x:joints.rShoulder.x, y:joints.rShoulder.y},
+    leftLeg:{x:joints.lHip.x, y:joints.crotchY},
+    rightLeg:{x:joints.rHip.x, y:joints.crotchY}
   };
 
+  // Create part canvases with soft weighted alpha
   var parts = {};
-  for (var pi=0; pi<partNames.length; pi++) {
+  for (var pi=0; pi<6; pi++) {
     var name = partNames[pi];
-    var pid = partIds[pi];
     var pc = document.createElement("canvas");
     pc.width = w; pc.height = h;
     var pctx = pc.getContext("2d");
-    var pd2 = pctx.createImageData(w, h);
-    var pdd = pd2.data;
+    var pid = pctx.createImageData(w, h);
+    var pd = pid.data;
+    var center = partCenters[pi];
 
-    for (var py2=0; py2<h; py2++) {
-      for (var px2=0; px2<w; px2++) {
-        var pidx2 = py2*w+px2;
-        if (d[pidx2*4+3] <= 10) continue;
-        var si = pidx2*4;
-        var belongs = partMap[pidx2] === pid;
+    for (var py=0; py<h; py++) {
+      for (var px=0; px<w; px++) {
+        var idx = py*w+px;
+        var srcA = d[idx*4+3];
+        if (srcA <= 10) continue;
 
-        if (!belongs) {
-          // Check overlap zone
-          var nearOwn = false;
-          for (var dy=-overlapPx; dy<=overlapPx && !nearOwn; dy+=2) {
-            for (var dx=-overlapPx; dx<=overlapPx && !nearOwn; dx+=2) {
-              var ny=py2+dy, nx=px2+dx;
-              if (ny>=0&&ny<h&&nx>=0&&nx<w && partMap[ny*w+nx]===pid) {
-                if (Math.abs(dx)+Math.abs(dy) <= overlapPx*1.5) nearOwn=true;
-              }
-            }
+        // Distance from this part's center
+        var dx = px - center.cx;
+        var dy = py - center.cy;
+        var dist = Math.sqrt(dx*dx + dy*dy);
+        var weight = Math.max(0, 1 - dist/center.r);
+        weight = weight * weight; // smooth falloff
+
+        // Zone bonus: increase weight if pixel is in the expected zone
+        if (pi === 0) { // head: above neck
+          if (py < joints.neckY + charH*0.05) weight = Math.max(weight, 0.9);
+          else weight *= 0.3;
+        } else if (pi === 1) { // torso: between neck and crotch, center
+          if (py > joints.neckY-charH*0.03 && py < joints.crotchY+charH*0.03) {
+            var tMid = (joints.lShoulder.x+joints.rShoulder.x)/2;
+            var tHalf = Math.abs(joints.rShoulder.x-joints.lShoulder.x)/2*1.1;
+            if (Math.abs(px-tMid) < tHalf) weight = Math.max(weight, 0.8);
           }
-          if (nearOwn) {
-            pdd[si]=d[si]; pdd[si+1]=d[si+1]; pdd[si+2]=d[si+2];
-            pdd[si+3]=Math.round(d[si+3]*0.45);
-            continue;
-          }
+        } else if (pi === 2) { // left arm: left side, shoulder to hip
+          if (px < joints.neckX-charH*0.02 && py > joints.lShoulder.y-charH*0.05 && py < joints.crotchY+charH*0.1) weight = Math.max(weight, 0.7);
+          if (px > joints.neckX+charH*0.05) weight *= 0.1;
+        } else if (pi === 3) { // right arm: right side
+          if (px > joints.neckX+charH*0.02 && py > joints.rShoulder.y-charH*0.05 && py < joints.crotchY+charH*0.1) weight = Math.max(weight, 0.7);
+          if (px < joints.neckX-charH*0.05) weight *= 0.1;
+        } else if (pi === 4) { // left leg: below crotch, left
+          if (py > joints.crotchY-charH*0.05 && px < joints.crotchX+charH*0.05) weight = Math.max(weight, 0.8);
+          if (py < joints.crotchY-charH*0.1) weight *= 0.15;
+        } else if (pi === 5) { // right leg: below crotch, right
+          if (py > joints.crotchY-charH*0.05 && px > joints.crotchX-charH*0.05) weight = Math.max(weight, 0.8);
+          if (py < joints.crotchY-charH*0.1) weight *= 0.15;
         }
-        if (belongs) {
-          pdd[si]=d[si]; pdd[si+1]=d[si+1]; pdd[si+2]=d[si+2]; pdd[si+3]=d[si+3];
-        }
+
+        weight = Math.max(0, Math.min(1, weight));
+        if (weight < 0.01) continue;
+
+        var si = idx*4;
+        pd[si] = d[si];
+        pd[si+1] = d[si+1];
+        pd[si+2] = d[si+2];
+        pd[si+3] = Math.round(srcA * weight);
       }
     }
-    pctx.putImageData(pd2, 0, 0);
+    pctx.putImageData(pid, 0, 0);
     var partImg = new Image();
     partImg.src = pc.toDataURL();
     partImg.width = w; partImg.height = h;
-    parts[name] = { img: partImg, pivot: pivots[name] };
+    parts[name] = {img: partImg, pivot: pivots[name]};
   }
 
   return {
     parts: parts, width: w, height: h, aiUsed: aiUsed,
     landmarks: {
       topY:topY/h, neckY:joints.neckY/h, shoulderY:shoulderMidY/h,
-      hipY:joints.crotchY/h, botY:botY/h,
-      lShoulder:{x:joints.lShoulder.x/w,y:joints.lShoulder.y/h},
-      rShoulder:{x:joints.rShoulder.x/w,y:joints.rShoulder.y/h}
+      hipY:joints.crotchY/h, botY:botY/h
     }
   };
 }
@@ -724,7 +684,7 @@ function App(){
           E("div",null,E("label",{className:"text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2 block"},"Animation Cycles"),E("div",{className:"grid grid-cols-2 sm:grid-cols-4 gap-2"},Object.entries(ANIMATIONS).map(function(en){var k=en[0],a=en[1];return E("button",{key:k,onClick:function(){toggleAnim(k)},className:"p-3 rounded-xl text-left transition-all border "+(selectedAnims.includes(k)?"bg-violet-600/15 border-violet-500/50 shadow-lg shadow-violet-600/10":"bg-zinc-900/50 border-zinc-800 hover:border-zinc-700")},E("div",{className:"text-sm font-semibold text-zinc-200"},a.label),E("div",{className:"text-xs text-zinc-500 mt-0.5"},a.desc));}))),
           spriteSheet&&E("div",{className:"space-y-4"},
             E("div",{className:"flex gap-4 items-start flex-wrap"},
-              E("div",{className:"flex-shrink-0"},E("label",{className:"text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2 block"},"Preview"),E("div",{className:"flex flex-col items-center gap-2"},E(PreviewCanvas,null),E("button",{onClick:function(){setPlaying(!playing)},className:"px-4 py-2 rounded-lg text-sm font-semibold transition-all "+(playing?"bg-violet-600 text-white shadow-lg shadow-violet-600/25":"bg-zinc-800 text-zinc-400 hover:bg-zinc-700")},playing?"\u23F8 Pause":"\u25B6 Play"))),
+              E("div",{className:"flex-shrink-0"},E("label",{className:"text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2 block"},"Preview"),E("div",{className:"flex flex-col items-center gap-2"},E(PreviewCanvas,null),E("button",{onClick:function(){setPlaying(!playing)},className:"px-4 py-2 rounded-lg text-sm font-semibold transition-all "+(playing?"bg-violet-600 text-white shadow-lg shadow-violet-600/25":"bg-zinc-800 text-zinc-400 hover:bg-zinc-700")},playing?"Pause":"Play"))),
               E("div",{className:"flex-1 text-xs text-zinc-500 space-y-1 pt-6"},E("p",null,E("span",{className:"text-zinc-400"},"Sheet: "),frameCount*(charSize+padding*2)+"\u00d7"+selectedAnims.length*(charSize+padding*2)+"px"),E("p",null,E("span",{className:"text-zinc-400"},"Cell: "),(charSize+padding*2)+"px"),E("p",null,E("span",{className:"text-zinc-400"},"Frames: "),frameCount*selectedAnims.length),E("p",null,E("span",{className:"text-zinc-400"},"Cycle: "),E("span",{className:"font-mono text-violet-400"},pingPong)),bodyData&&E("p",{className:"text-emerald-600 mt-1"},bodyData.aiUsed?"\u2713 AI skeleton":"Heuristic"),lm&&E("p",{className:"text-zinc-600"},"Neck:"+Math.round(lm.neckY*100)+"% Sh:"+Math.round(lm.shoulderY*100)+"% Hip:"+Math.round(lm.hipY*100)+"%"))),
             E("div",null,E("label",{className:"text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2 block"},"Sprite Sheet"),E("div",{className:"overflow-auto rounded-xl border border-zinc-800 p-2",style:{background:"repeating-conic-gradient(#27272a 0% 25%,#18181b 0% 50%) 0 0/16px 16px"}},E("img",{src:spriteSheet,className:"max-w-full",style:{imageRendering:charSize<=64?"pixelated":"auto"}}))),
             E("a",{href:spriteSheet,download:"spritesheet_"+charSize+"px_"+selectedAnims.join("-")+"_"+frameCount+"f.png",className:"inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold transition-all shadow-lg shadow-emerald-600/20"},"\u2B07 Download PNG"))))));
