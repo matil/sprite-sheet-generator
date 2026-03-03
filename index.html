@@ -320,7 +320,7 @@ function drawWeapon(ctx, wpn, bd, size, pose, position) {
     ctx.translate(size*0.35+(tP.ox||0)*0.4, size*0.32+(tP.oy||0)*0.4+by);
     ctx.rotate(-0.5+(tP.rot||0)*0.4);
     ctx.globalAlpha=0.7;
-    ctx.drawImage(wi,-ww*0.4,-wh*0.2,ww*0.8,wh*0.8);
+    ctx.drawImage(wi,0,-wh*0.3,ww*0.8,wh*0.8);
     ctx.restore();
   } else {
     var aRot=pose.rightArm?pose.rightArm.rot||0:0;
@@ -335,7 +335,7 @@ function drawWeapon(ctx, wpn, bd, size, pose, position) {
     ctx.save();
     ctx.translate(hX,hY);
     ctx.rotate(aRot+0.1);
-    ctx.drawImage(wi,-ww*0.4,-wh*0.9,ww,wh);
+    ctx.drawImage(wi,0,-wh*0.5,ww,wh);
     ctx.restore();
   }
 }
@@ -406,7 +406,7 @@ var ANIMATIONS = {
     if(wpn&&wpn.showAll) drawWeapon(ctx,wpn,bd,sz,p,"back");
     if(t>0.85){var q2=(t-0.85)/0.15; drawDust(ctx,sz/2,sz*0.88+arc,4+Math.floor(q2*6),sz*0.1*q2,0.35*q2,sz*0.012);}
   }},
-  attack: { label:"Attack", desc:"Weapon attack", generate: function(ctx,img,f,tot,sz,bd,wpn) {
+  attack: { label:"Attack", desc:"Weapon attack", linear:true, generate: function(ctx,img,f,tot,sz,bd,wpn) {
     var t=f/Math.max(tot-1,1);
     var p={head:{},torso:{},leftArm:{},rightArm:{},leftLeg:{},rightLeg:{}};
     if(wpn&&wpn.type==="gun"){
