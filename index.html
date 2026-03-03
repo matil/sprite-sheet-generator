@@ -277,27 +277,56 @@ async function analyzeWithClaude(img, apiKey) {
     headers["anthropic-dangerous-direct-browser-access"] = "true";
   }
 
-  var response = await fetch(url, {
-    method: "POST",
-    headers: headers,
-    body: JSON.stringify({
-      model: "claude-sonnet-4-20250514",
-      max_tokens: 1000,
-      messages: [{
-        role: "user",
-        content: [
-          {type:"image", source:{type:"base64", media_type:"image/png", data:base64}},
-          {type:"text", text:"Analyze this game character image. Return ONLY a JSON object with these body part bounding boxes as fractions (0-1) of image dimensions: {\"head\":{\"t\":top,\"b\":bottom,\"l\":left,\"r\":right}, \"torso\":{...}, \"leftArm\":{...}, \"rightArm\":{...}, \"leftLeg\":{...}, \"rightLeg\":{...}}. Each part needs t,b,l,r as 0-1 fractions. Be precise about where each body part starts and ends. Arms include hands. Legs include feet. No text outside the JSON."}
-        ]
-      }]
-    })
-  });
+  var response;
+  try {
+    response = await fetch(url, {
+      method: "POST",
+      headers: headers,
+      body: JSON.stringify({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 1000,
+        messages: [{
+          role: "user",
+          content: [
+            {type:"image", source:{type:"base64", media_type:"image/png", data:base64}},
+            {type:"text", text:"Analyze this game character image. Return ONLY a JSON object with these body part bounding boxes as fractions (0-1) of image dimensions. Format: {\"head\":{\"t\":top,\"b\":bottom,\"l\":left,\"r\":right}, \"torso\":{...}, \"leftArm\":{...}, \"rightArm\":{...}, \"leftLeg\":{...}, \"rightLeg\":{...}}. Each part needs t,b,l,r as 0-1 fractions. Be precise. Arms include hands. Legs include feet. Return ONLY the JSON object, no other text."}
+          ]
+        }]
+      })
+    });
+  } catch(fetchErr) {
+    throw new Error("Network error - check API key or use inside claude.ai artifact");
+  }
 
-  var data = await response.json();
+  if (!response.ok) {
+    var errText = "";
+    try { errText = await response.text(); } catch(e2) {}
+    if (response.status === 401 || response.status === 403) {
+      throw new Error("Auth failed (" + response.status + ") - check your API key");
+    }
+    throw new Error("API error " + response.status);
+  }
+
+  var data;
+  try { data = await response.json(); } catch(e3) {
+    throw new Error("Invalid API response");
+  }
+
   var text = "";
   if (data.content) data.content.forEach(function(b){if(b.type==="text") text+=b.text;});
+  if (!text) throw new Error("Empty response from Claude");
+
   text = text.replace(/```json|```/g,"").trim();
-  var parsed = JSON.parse(text);
+  // Find the JSON object in the response
+  var jsonStart = text.indexOf("{");
+  var jsonEnd = text.lastIndexOf("}");
+  if (jsonStart < 0 || jsonEnd < 0) throw new Error("No JSON in Claude response");
+  text = text.slice(jsonStart, jsonEnd + 1);
+
+  var parsed;
+  try { parsed = JSON.parse(text); } catch(e4) {
+    throw new Error("Claude response not valid JSON - retry");
+  }
 
   // Validate
   var keys = ["head","torso","leftArm","rightArm","leftLeg","rightLeg"];
@@ -305,7 +334,7 @@ async function analyzeWithClaude(img, apiKey) {
     return parsed[k] && typeof parsed[k].t==="number" && typeof parsed[k].b==="number"
       && typeof parsed[k].l==="number" && typeof parsed[k].r==="number";
   });
-  if (!valid) throw new Error("Invalid Claude response");
+  if (!valid) throw new Error("Claude returned wrong format - retry");
   return parsed;
 }
 
