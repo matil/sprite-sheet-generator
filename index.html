@@ -494,7 +494,7 @@ var ANIMATIONS = {
     ctx.restore();
     if(wpn&&wpn.showAll){
       if(t<0.25){var dp2={torso:{},head:{},leftArm:{},rightArm:{},leftLeg:{},rightLeg:{},by:0}; drawWeapon(ctx,wpn,bd,sz,dp2,"back");}
-      else{var dropT=Math.min((t-0.25)/0.3,1); var wi2=wpn.img,ar2=wi2.width/Math.max(wi2.height,1); var pct2=(wpn.size||30)/100; var ws2=sz*pct2,ww2=ws2*ar2,wh2=ws2; var gndY=sz*0.82; var startX=sz*0.42; var endX=sz*0.25; var startY=sz*0.4; var wpX=startX+(endX-startX)*dropT; var wpY=startY+(gndY-startY)*dropT; ctx.save(); ctx.translate(wpX,wpY); ctx.rotate(Math.PI/2+dropT*0.5); ctx.globalAlpha=0.85-dropT*0.15; ctx.drawImage(wi2,-ww2*0.3,-wh2*0.3,ww2*0.6,wh2*0.6); ctx.restore();}
+      else{var dropT=Math.min((t-0.25)/0.35,1); var wi2=wpn.img,ar2=wi2.width/Math.max(wi2.height,1); var pct2=(wpn.size||30)/100; var ws2=sz*pct2,ww2=ws2*ar2,wh2=ws2; var gndY=sz*0.88; var startX=sz*0.45; var endX=sz*0.72; var startY=sz*0.35; var arcY=-Math.sin(dropT*Math.PI)*sz*0.25; var wpX=startX+(endX-startX)*dropT; var wpY=startY+(gndY-startY)*dropT+arcY; var spinAngle=dropT*Math.PI*2.5; ctx.save(); ctx.translate(wpX,wpY); ctx.rotate(spinAngle); ctx.globalAlpha=0.9; ctx.drawImage(wi2,-ww2*0.3,-wh2*0.3,ww2*0.6,wh2*0.6); ctx.restore();}
     }
     if(t>0.3) drawDust(ctx,charCx-Math.sin(rot)*sz*0.3,footY,3+Math.floor(t*5),sz*0.07*t,0.2*(1-t*0.5),sz*0.01);
   }},
@@ -808,7 +808,8 @@ function App(){
           ctx.save();
           ctx.globalAlpha=0.85;
           ctx.translate(wx,wy);
-          ctx.rotate((wpnRot||0)*Math.PI/180);
+          var baseRot=isAtk?0.1:(weaponType==="gun"?(-Math.PI/2+0.1):(Math.PI/2-0.1));
+          ctx.rotate(baseRot+(wpnRot||0)*Math.PI/180);
           ctx.drawImage(weaponImgEl,-ww*0.35,-wh*0.5,ww*0.7,wh*0.7);
           ctx.restore();
           ctx.save();
@@ -821,9 +822,9 @@ function App(){
           ctx.restore();
         }
       }; img.src=spriteSheet;
-    },[previewFrame,previewAnim,spriteSheet]);
+    },[previewFrame,previewAnim,spriteSheet,wpnDragging,wpnBackOff,wpnAtkOff,wpnSize,wpnRot,weaponImgEl,weaponType]);
     return React.createElement("canvas",{ref:ref,style:{width:Math.max(charSize+padding*2,128),height:Math.max(charSize+padding*2,128),imageRendering:charSize<=64?"pixelated":"auto",cursor:weaponImgEl?"grab":"default"},className:"border border-zinc-700 rounded bg-zinc-900/50",onMouseDown:function(e){if(!weaponImgEl)return;e.preventDefault();_preDragPlay.current=playing;setPlaying(false);setWpnDragging(true);var r=e.target.getBoundingClientRect();var x=(e.clientX-r.left)/r.width*2-1;var y=(e.clientY-r.top)/r.height*2-1;if(previewAnim==="attack")setWpnAtkOff({x:x,y:y});else setWpnBackOff({x:x,y:y});},onMouseMove:function(e){if(!wpnDragging||!weaponImgEl)return;var r=e.target.getBoundingClientRect();var x=(e.clientX-r.left)/r.width*2-1;var y=(e.clientY-r.top)/r.height*2-1;if(previewAnim==="attack")setWpnAtkOff({x:x,y:y});else setWpnBackOff({x:x,y:y});},onMouseUp:function(){if(wpnDragging){setWpnDragging(false);setPlaying(_preDragPlay.current);}},onMouseLeave:function(){if(wpnDragging){setWpnDragging(false);setPlaying(_preDragPlay.current);}}});
-  },[spriteSheet,previewFrame,previewAnim,charSize,padding,selectedAnims,wpnDragging,wpnBackOff,wpnAtkOff,wpnSize,wpnRot,weaponImgEl]);
+  },[spriteSheet,previewFrame,previewAnim,charSize,padding,selectedAnims,wpnDragging,wpnBackOff,wpnAtkOff,wpnSize,wpnRot,weaponImgEl,weaponType]);
 
   var pingPong=(function(){var s=[];for(var i=0;i<frameCount;i++){s.push(getPingPong(i,frameCount).frame+1);}return s.join("-");})();
   var lm=bodyData?bodyData.landmarks:null;
