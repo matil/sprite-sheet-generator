@@ -360,7 +360,7 @@ var ANIMATIONS = {
     };
     if(bd) drawAnimChar(ctx,bd,sz,pose); else drawCharFallback(ctx,img,sz,pose);
   }},
-  jump: { label:"Jump", desc:"Squat, launch, peak, land", generate: function(ctx,img,f,tot,sz,bd) {
+  jump: { label:"Jump", desc:"Squat, launch, peak, land", linear:true, generate: function(ctx,img,f,tot,sz,bd) {
     var t=f/Math.max(tot-1,1);
     var arc=-Math.sin(t*Math.PI)*sz*0.24;
     var p={head:{},torso:{},leftArm:{},rightArm:{},leftLeg:{},rightLeg:{},by:arc};
@@ -395,7 +395,7 @@ var ANIMATIONS = {
     if(wpn&&wpn.img){var ws=sz*0.32,wi=wpn.img,ar=wi.width/Math.max(wi.height,1),ww=ws*ar,wh=ws,aRot=p.rightArm?p.rightArm.rot||0:0;ctx.save();ctx.translate(sz*0.62,sz*0.32);ctx.rotate(aRot*0.7);ctx.drawImage(wi,-ww*0.2,-wh*0.5,ww,wh);ctx.restore();}
 
   }},
-  death: { label:"Death", desc:"Fall backward", generate: function(ctx,img,f,tot,sz,bd) {
+  death: { label:"Death", desc:"Fall backward", linear:true, generate: function(ctx,img,f,tot,sz,bd) {
     var t=f/Math.max(tot-1,1);
     var p={head:{},torso:{},leftArm:{},rightArm:{},leftLeg:{},rightLeg:{},by:0,alpha:1};
     if(t<0.12){var q=t/0.12; p.head={rot:q*0.12}; p.torso={rot:q*0.06}; p.leftArm={rot:-q*0.2}; p.rightArm={rot:q*0.15};}
@@ -417,13 +417,27 @@ var ANIMATIONS = {
   spin: { label:"Spin", desc:"Full 360 rotation", generate: function(ctx,img,f,tot,sz,bd) {
     var t=(f/tot)*Math.PI*2;
     var scaleX=Math.cos(t);
+    var absX=Math.abs(scaleX);
     var iw=img.width, ih=img.height;
     var dy=(sz-ih)/2;
     var bob=Math.sin(t*2)*sz*0.01;
+    var thickness=sz*0.06;
+    var edgeAlpha=1-absX;
+    if(edgeAlpha>0.15){
+      ctx.save();
+      ctx.globalAlpha=edgeAlpha*0.7;
+      var cx=sz/2,ey=dy+bob;
+      var sideOff=scaleX>0?-thickness*edgeAlpha:thickness*edgeAlpha;
+      ctx.fillStyle='#333';
+      ctx.beginPath();
+      ctx.ellipse(cx+sideOff,sz/2+bob,thickness*edgeAlpha,ih*0.45,0,0,Math.PI*2);
+      ctx.fill();
+      ctx.restore();
+    }
     ctx.save();
     ctx.translate(sz/2,sz/2+bob);
     ctx.scale(scaleX>0?1:-1,1);
-    ctx.scale(Math.abs(scaleX)*0.9+0.1,1);
+    ctx.scale(absX*0.85+0.15,1);
     ctx.translate(-sz/2,-sz/2);
     ctx.drawImage(img, 0, 0, iw, ih, (sz-iw)/2, dy, iw, ih);
     ctx.restore();
@@ -629,7 +643,7 @@ function App(){
             var ox=oc.getContext("2d"); ox.imageSmoothingEnabled=charSize>64;
             ox.save(); ox.translate(padding,padding);
             if(addShadow) drawShadow(ox,charSize);
-            var m=getPingPong(f,frameCount);
+            var m=anim.linear?{frame:f,total:frameCount}:getPingPong(f,frameCount);
             var wpnData=weaponImgEl?{img:weaponImgEl,type:weaponType||"melee"}:null; anim.generate(ox,fitted,m.frame,m.total,charSize,fBD,wpnData);
             ox.restore(); ctx.drawImage(oc,f*cs,row*cs);
           }
