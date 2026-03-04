@@ -341,8 +341,8 @@ function drawWeapon(ctx, wpn, bd, size, pose, position) {
     var hipY=lm?lm.hipY*size:size*0.52;
     var bo=wpn.backOff||{x:0,y:0};
     var defBx=size*0.48+bx+(tP.ox||0)*0.3, defBy=(shY+hipY)*0.5+by+(tP.oy||0)*0.3;
-    var backCx=(bo.x!==0||bo.y!==0)?((bo.x*0.5+0.5)*size):defBx;
-    var backCy=(bo.x!==0||bo.y!==0)?((bo.y*0.5+0.5)*size):defBy;
+    var backCx=(bo.x!==0||bo.y!==0)?((bo.x*0.5+0.5)*size+bx+(tP.ox||0)*0.3):defBx;
+    var backCy=(bo.x!==0||bo.y!==0)?((bo.y*0.5+0.5)*size+by+(tP.oy||0)*0.3):defBy;
     var bRot=(tP.rot||0)*0.5;
     ctx.save();
     ctx.translate(backCx, backCy);
@@ -364,13 +364,13 @@ function drawWeapon(ctx, wpn, bd, size, pose, position) {
     var lm2=bd?bd.landmarks:null;
     var sY=lm2?lm2.shoulderY*size:size*0.28;
     var defX=size*0.42+bx+(tP.ox||0), defY=sY+size*0.22+by+(tP.oy||0);
-    var handX=(ao.x!==0||ao.y!==0)?((ao.x*0.5+0.5)*size):defX;
-    var handY=(ao.x!==0||ao.y!==0)?((ao.y*0.5+0.5)*size):defY;
+    var handX=(ao.x!==0||ao.y!==0)?((ao.x*0.5+0.5)*size+bx+(tP.ox||0)):defX;
+    var handY=(ao.x!==0||ao.y!==0)?((ao.y*0.5+0.5)*size+by+(tP.oy||0)):defY;
     var totalRot=aRot+(foreP.rot||0);
     ctx.save();
     ctx.translate(handX,handY);
     ctx.rotate(totalRot+0.1+userRot);
-    ctx.drawImage(wi,0,-wh*0.5,ww,wh);
+    ctx.drawImage(wi,0,-wh*0.35,ww*0.7,wh*0.7);
     ctx.restore();
   }
 }
