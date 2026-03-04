@@ -10,6 +10,21 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
 <script src="https://cdn.tailwindcss.com"></script>
+
+  <style>
+  body{margin:0;padding:0;background:#0a0e1a;overflow-x:hidden}
+  .min-h-screen{padding:12px!important;overflow-x:hidden}
+  .max-w-6xl{max-width:100%!important}
+  /* Styled scrollbars - OT360 style */
+  ::-webkit-scrollbar{width:6px;height:6px}
+  ::-webkit-scrollbar-track{background:#111827;border-radius:3px}
+  ::-webkit-scrollbar-thumb{background:#2d3a52;border-radius:3px}
+  ::-webkit-scrollbar-thumb:hover{background:#3d4f6f}
+  * {scrollbar-width:thin;scrollbar-color:#2d3a52 #111827}
+  /* Prevent overflow */
+  .col-span-1,.space-y-4{min-width:0;overflow:hidden}
+  canvas{max-width:100%!important}
+  </style>
 </head>
 <body style="background:#09090b;margin:0">
 <div id="root"></div>
@@ -882,7 +897,7 @@ function App(){
   return E("div",{className:"min-h-screen bg-zinc-950 text-zinc-100 p-4 md:p-4"},
     E("div",{className:"max-w-6xl mx-auto"},
       
-      E("div",{className:"grid grid-cols-2 gap-4"},
+      E("div",{style:{display:"grid",gridTemplateColumns:"280px 1fr",gap:"16px",minWidth:0}},
         E("div",{className:"col-span-1 space-y-4"},
           E("button",{onClick:function(){setShowGenPanel(!showGenPanel)},className:"w-full px-3 py-1.5 rounded-lg text-xs font-semibold transition-all border mb-3 "+(showGenPanel?"bg-green-600/15 border-green-500/50 text-green-300":"bg-zinc-900/50 border-zinc-800 text-zinc-400 hover:border-zinc-700")},showGenPanel?"\u2716 Hide Generator":"\u2728 AI Generate"),
           showGenPanel&&E("div",{className:"space-y-3 p-4 rounded-xl border border-emerald-500/20 bg-emerald-500/5 mb-3"},
