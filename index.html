@@ -450,14 +450,19 @@ var ANIMATIONS = {
   attack: { label:"Attack", desc:"Weapon attack", linear:true, generate: function(ctx,img,f,tot,sz,bd,wpn) {
     var t=f/Math.max(tot-1,1);
     var p={head:{},torso:{},leftArm:{},rightArm:{},leftLeg:{},rightLeg:{}};
-    if(wpn&&wpn.img){
-      var cycle=Math.sin(t*Math.PI);
-      p.leftArm={rot:-2.8*cycle};
-      p.leftUpperArm={rot:-2.8*cycle}; p.leftLowerArm={rot:-0.6*Math.max(cycle-0.3,0)/0.7};
-      p.torso={rot:cycle*0.15,oy:-cycle*sz*0.015};
-      p.rightArm={rot:cycle*0.1};
-      p.head={rot:cycle*0.08};
-      p.rightLeg={rot:cycle*0.05}; p.leftLeg={rot:-cycle*0.05};
+    if(wpn&&wpn.type==="gun"){
+      if(t<0.15){var q=t/0.15; p.leftArm={rot:-q*0.6}; p.rightArm={rot:-q*0.5}; p.torso={rot:q*0.05}; p.head={rot:q*0.03};}
+      else if(t<0.25){var q=(t-0.15)/0.1; p.leftArm={rot:-0.6+q*0.35}; p.rightArm={rot:-0.5+q*0.3}; p.torso={rot:0.05-q*0.12}; p.head={rot:0.03-q*0.06};}
+      else if(t<0.4){var q=(t-0.25)/0.15; var s=Math.sin(q*Math.PI*2)*0.08*(1-q); p.leftArm={rot:-0.25+s}; p.rightArm={rot:-0.2+s*0.7}; p.torso={rot:-0.07+s*0.3}; p.head={rot:-0.03+s*0.2};}
+      else{var q=(t-0.4)/0.6,e=1-Math.pow(1-q,2); p.leftArm={rot:-0.25*(1-e)}; p.rightArm={rot:-0.2*(1-e)}; p.torso={rot:-0.07*(1-e)}; p.head={rot:-0.03*(1-e)};}
+      p.leftUpperArm=p.leftArm; p.leftLowerArm={rot:0};
+    } else if(wpn&&wpn.img){
+      if(t<0.35){var q=t/0.35,e=1-Math.pow(1-q,3); p.leftArm={rot:-e*2.2}; p.torso={rot:e*0.12,oy:-e*sz*0.02}; p.rightArm={rot:e*0.08}; p.head={rot:e*0.06};}
+      else if(t<0.5){var q=(t-0.35)/0.15,e=q*q*q; p.leftArm={rot:-2.2+e*3.5}; p.torso={rot:0.12-e*0.25,oy:-sz*0.02+e*sz*0.03}; p.rightArm={rot:0.08-e*0.12}; p.head={rot:0.06-e*0.14};}
+      else if(t<0.6){var q=(t-0.5)/0.1; p.leftArm={rot:1.3+q*0.1}; p.torso={rot:-0.13-q*0.02}; p.head={rot:-0.08};}
+      else{var q=(t-0.6)/0.4,e=1-Math.pow(1-q,2); p.leftArm={rot:1.4*(1-e)}; p.torso={rot:-0.15*(1-e)}; p.rightArm={rot:-0.04*(1-e)}; p.head={rot:-0.08*(1-e)};}
+      p.leftUpperArm=p.leftArm; p.leftLowerArm={rot:0};
+      p.rightLeg={rot:(p.torso.rot||0)*-0.3}; p.leftLeg={rot:(p.torso.rot||0)*0.3};
     } else {
       if(t<0.3){var q=t/0.3,e=1-Math.pow(1-q,2); p.torso={rot:-e*0.18,ox:-e*sz*0.02}; p.rightArm={rot:-e*1.5}; p.leftArm={rot:e*0.4}; p.rightLeg={rot:-e*0.2}; p.leftLeg={rot:e*0.15}; p.head={rot:-e*0.08};}
       else if(t<0.45){var q=(t-0.3)/0.15,e=q*q*q; p.torso={rot:-0.18+e*0.42,ox:-0.02*sz+e*sz*0.06}; p.rightArm={rot:-1.5+e*3.0}; p.leftArm={rot:0.4-e*0.6}; p.rightLeg={rot:-0.2+e*0.35}; p.leftLeg={rot:0.15-e*0.1}; p.head={rot:-0.08+e*0.18};}
@@ -487,7 +492,7 @@ var ANIMATIONS = {
     ctx.restore();
     if(wpn&&wpn.showAll){
       if(t<0.25){var dp2={torso:{},head:{},leftArm:{},rightArm:{},leftLeg:{},rightLeg:{},by:0}; drawWeapon(ctx,wpn,bd,sz,dp2,"back");}
-      else{var dropT=Math.min((t-0.25)/0.35,1); var wi2=wpn.img,ar2=wi2.width/Math.max(wi2.height,1); var pct2=(wpn.size||30)/100; var ws2=sz*pct2,ww2=ws2*ar2,wh2=ws2; var gndY=sz*0.9; var startX=sz*0.45; var endX=sz*0.7; var startY=sz*0.35; var arcY=-Math.sin(dropT*Math.PI)*sz*0.2; var wpX=startX+(endX-startX)*dropT; var wpY=dropT<0.85?(startY+(gndY-startY)*(dropT/0.85)+arcY):gndY; var flyRot=dropT<0.85?(dropT/0.85)*Math.PI*2:0; ctx.save(); ctx.translate(wpX,wpY); ctx.rotate(flyRot); ctx.globalAlpha=dropT<0.85?0.9:0.8; ctx.drawImage(wi2,-ww2*0.35,-wh2*0.15,ww2*0.7,wh2*0.3); ctx.restore();}
+      else{var dropT=Math.min((t-0.25)/0.35,1); var wi2=wpn.img,ar2=wi2.width/Math.max(wi2.height,1); var pct2=(wpn.size||30)/100; var ws2=sz*pct2,ww2=ws2*ar2,wh2=ws2; var gndY=sz*0.9; var startX=sz*0.45; var endX=sz*0.7; var startY=sz*0.35; var arcY=-Math.sin(dropT*Math.PI)*sz*0.2; var wpX=startX+(endX-startX)*dropT; var wpY=dropT<0.85?(startY+(gndY-startY)*(dropT/0.85)+arcY):gndY; var flyRot=dropT<0.85?(dropT/0.85)*Math.PI*2.5:Math.PI/2; ctx.save(); ctx.translate(wpX,wpY); ctx.rotate(flyRot); ctx.globalAlpha=dropT<0.85?0.9:0.8; ctx.drawImage(wi2,-ww2*0.35,-wh2*0.15,ww2*0.7,wh2*0.3); ctx.restore();}
     }
     if(t>0.3) drawDust(ctx,charCx-Math.sin(rot)*sz*0.3,footY,3+Math.floor(t*5),sz*0.07*t,0.2*(1-t*0.5),sz*0.01);
   }},
@@ -634,6 +639,7 @@ function App(){
   var _wpnMir=useState(false),wpnMirror=_wpnMir[0],setWpnMirror=_wpnMir[1];
   var _wpnDrg=useState(false),wpnDragging=_wpnDrg[0],setWpnDragging=_wpnDrg[1];
   var _preDragPlay=useRef(false);
+  var _dragIsAtk=useRef(false);
 
   var handleUpload=useCallback(function(e){
     var file=(e.target.files||[])[0]; if(!file)return;
@@ -827,8 +833,8 @@ function App(){
         }; img.src=spriteSheet;
       }
     },[previewFrame,previewAnim,spriteSheet,wpnDragging,wpnBackOff,wpnAtkOff,wpnSize,wpnRot,weaponImgEl,weaponType,imgEl]);
-    return React.createElement("canvas",{ref:ref,style:{width:Math.max(charSize+padding*2,128),height:Math.max(charSize+padding*2,128),imageRendering:charSize<=64?"pixelated":"auto",cursor:weaponImgEl?"grab":"default"},className:"border border-zinc-700 rounded bg-zinc-900/50",onMouseDown:function(e){if(!weaponImgEl)return;e.preventDefault();_preDragPlay.current=playing;setPlaying(false);setWpnDragging(true);var r=e.target.getBoundingClientRect();var x=(e.clientX-r.left)/r.width*2-1;var y=(e.clientY-r.top)/r.height*2-1;if(previewAnim==="attack")setWpnAtkOff({x:x,y:y});else setWpnBackOff({x:x,y:y});},onMouseMove:function(e){if(!wpnDragging||!weaponImgEl)return;var r=e.target.getBoundingClientRect();var x=(e.clientX-r.left)/r.width*2-1;var y=(e.clientY-r.top)/r.height*2-1;if(previewAnim==="attack")setWpnAtkOff({x:x,y:y});else setWpnBackOff({x:x,y:y});},onMouseUp:function(){if(wpnDragging){setWpnDragging(false);setPlaying(_preDragPlay.current);}},onMouseLeave:function(){if(wpnDragging){setWpnDragging(false);setPlaying(_preDragPlay.current);}}});
-  },[spriteSheet,previewFrame,previewAnim,charSize,padding,selectedAnims,wpnDragging,wpnBackOff,wpnAtkOff,wpnSize,wpnRot,weaponImgEl,weaponType,imgEl]);
+    return React.createElement("canvas",{ref:ref,style:{width:Math.max(charSize+padding*2,128),height:Math.max(charSize+padding*2,128),imageRendering:charSize<=64?"pixelated":"auto",cursor:weaponImgEl?"grab":"default"},className:"border border-zinc-700 rounded bg-zinc-900/50",onMouseDown:function(e){if(!weaponImgEl)return;e.preventDefault();_preDragPlay.current=playing;setPlaying(false);setWpnDragging(true);_dragIsAtk.current=(previewAnim==="attack");var r=e.target.getBoundingClientRect();var x=(e.clientX-r.left)/r.width*2-1;var y=(e.clientY-r.top)/r.height*2-1;if(_dragIsAtk.current)setWpnAtkOff({x:x,y:y});else setWpnBackOff({x:x,y:y});},onMouseMove:function(e){if(!wpnDragging||!weaponImgEl)return;var r=e.target.getBoundingClientRect();var x=(e.clientX-r.left)/r.width*2-1;var y=(e.clientY-r.top)/r.height*2-1;if(_dragIsAtk.current)setWpnAtkOff({x:x,y:y});else setWpnBackOff({x:x,y:y});},onMouseUp:function(){if(wpnDragging){setWpnDragging(false);setPlaying(_preDragPlay.current);}},onMouseLeave:function(){if(wpnDragging){setWpnDragging(false);setPlaying(_preDragPlay.current);}}});
+  },[spriteSheet,previewFrame,previewAnim,charSize,padding,selectedAnims,wpnDragging,wpnBackOff,wpnAtkOff,wpnSize,wpnRot,weaponImgEl,weaponType,imgEl,playing]);
 
   var pingPong=(function(){var s=[];for(var i=0;i<frameCount;i++){s.push(getPingPong(i,frameCount).frame+1);}return s.join("-");})();
   var lm=bodyData?bodyData.landmarks:null;
