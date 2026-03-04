@@ -620,6 +620,13 @@ function App(){
   var _wpnEl=useState(null),weaponImgEl=_wpnEl[0],setWeaponImgEl=_wpnEl[1];
   var _wpnType=useState(""),weaponType=_wpnType[0],setWeaponType=_wpnType[1];
   var _wpnPanel=useState(false),showWpnPanel=_wpnPanel[0],setShowWpnPanel=_wpnPanel[1];
+  var _genPanel=useState(false),showGenPanel=_genPanel[0],setShowGenPanel=_genPanel[1];
+  var _genPrompt=useState(""),genPrompt=_genPrompt[0],setGenPrompt=_genPrompt[1];
+  var _genStyle=useState("pixel-art"),genStyle=_genStyle[0],setGenStyle=_genStyle[1];
+  var _genTarget=useState("character"),genTarget=_genTarget[0],setGenTarget=_genTarget[1];
+  var _genLoading=useState(false),genLoading=_genLoading[0],setGenLoading=_genLoading[1];
+  var _genPreview=useState(null),genPreview=_genPreview[0],setGenPreview=_genPreview[1];
+  var GEN_STYLES=["pixel-art","realistic","flat","anime","chibi","low-poly","watercolor","comic"];
   var _wpnRmBg=useState(true),wpnRemoveBg=_wpnRmBg[0],setWpnRemoveBg=_wpnRmBg[1];
   var _wpnTol=useState(35),wpnBgTol=_wpnTol[0],setWpnBgTol=_wpnTol[1];
   var _wpnAll=useState(false),wpnShowAll=_wpnAll[0],setWpnShowAll=_wpnAll[1];
@@ -651,6 +658,31 @@ function App(){
     var wimg=new Image(); wimg.onload=function(){setWpnRawImg(wimg);setWeaponImgEl(wimg);try{setWeaponType(detectWeaponType(wimg));}catch(e){}}; wimg.src=url;
     
   },[weaponType]);
+  var doGenerate=useCallback(function(){
+    if(!genPrompt.trim()||genLoading)return;
+    setGenLoading(true); setGenPreview(null);
+    var styleHint=genStyle==="pixel-art"?"pixel art style, 16-bit sprite":genStyle==="realistic"?"realistic detailed 3D render":genStyle==="flat"?"flat design vector style":genStyle==="anime"?"anime style cel shaded":genStyle==="chibi"?"chibi kawaii style":genStyle==="low-poly"?"low poly 3D style":genStyle==="watercolor"?"watercolor painting style":"comic book style";
+    var pose=genTarget==="character"?"full body standing side view facing right, single character, solid white background":"single item centered, solid white background, no hands";
+    var prompt=encodeURIComponent(genPrompt.trim()+", "+styleHint+", "+pose+", game asset, clean edges, no text");
+    var url="https://image.pollinations.ai/prompt/"+prompt+"?width=512&height=512&nologo=true&seed="+Math.floor(Math.random()*99999);
+    var img=new Image(); img.crossOrigin="anonymous";
+    img.onload=function(){setGenPreview(img); setGenLoading(false);};
+    img.onerror=function(){setGenLoading(false); alert("Generation failed, try again");};
+    img.src=url;
+  },[genPrompt,genStyle,genTarget,genLoading]);
+  var applyGenerated=useCallback(function(){
+    if(!genPreview)return;
+    var cv=document.createElement("canvas"); cv.width=genPreview.width; cv.height=genPreview.height;
+    cv.getContext("2d").drawImage(genPreview,0,0);
+    var dataUrl=cv.toDataURL("image/png");
+    if(genTarget==="character"){
+      setImage(dataUrl); var ni=new Image(); ni.onload=function(){setBodyData(null); setRawImg(ni); setImgEl(ni);}; ni.src=dataUrl;
+    } else {
+      setWeaponImage(dataUrl); var wi=new Image(); wi.onload=function(){setWpnRawImg(wi);setWeaponImgEl(wi);try{setWeaponType(detectWeaponType(wi));}catch(e){}}; wi.src=dataUrl;
+      setShowWpnPanel(true);
+    }
+    setShowGenPanel(false); setGenPreview(null);
+  },[genPreview,genTarget]);
   var removeWeapon=useCallback(function(){setWeaponImage(null);setWeaponImgEl(null);setWeaponType("");setWpnRawImg(null);setWpnShowAll(false);setWpnSize(30);setWpnBackOff({x:0,y:0});setWpnAtkOff({x:0,y:0});setWpnRot(0);setWpnMirror(false);},[]);
   var toggleAnim=function(key){setSelectedAnims([key]);};
 
@@ -834,6 +866,16 @@ function App(){
       E("div",{className:"mb-8"},E("h1",{className:"text-3xl font-bold tracking-tight bg-gradient-to-r from-violet-400 to-amber-300 bg-clip-text text-transparent"},"Sprite Sheet Generator"),E("p",{className:"text-zinc-500 text-sm mt-1"},"Upload character \u2192 AI body segmentation \u2192 per-pixel body parts \u2192 animated sprite sheet")),
       E("div",{className:"grid grid-cols-1 lg:grid-cols-3 gap-6"},
         E("div",{className:"lg:col-span-1 space-y-5"},
+          E("button",{onClick:function(){setShowGenPanel(!showGenPanel)},className:"w-full px-3 py-1.5 rounded-lg text-xs font-semibold transition-all border mb-3 "+(showGenPanel?"bg-emerald-600/15 border-emerald-500/50 text-emerald-300":"bg-zinc-900/50 border-zinc-800 text-zinc-400 hover:border-zinc-700")},showGenPanel?"\u2716 Hide Generator":"\u2728 AI Generate"),
+          showGenPanel&&E("div",{className:"space-y-3 p-4 rounded-xl border border-emerald-500/20 bg-emerald-500/5 mb-3"},
+            E("label",{className:"text-xs font-semibold text-zinc-400 uppercase tracking-wider block"},"Generate"),
+            E("div",{className:"flex gap-2"},E("button",{onClick:function(){setGenTarget("character")},className:"flex-1 px-3 py-2 rounded-lg text-xs font-semibold transition-all "+(genTarget==="character"?"bg-emerald-600 text-white shadow-lg":"bg-zinc-800 text-zinc-400 hover:bg-zinc-700")},"Character"),E("button",{onClick:function(){setGenTarget("weapon")},className:"flex-1 px-3 py-2 rounded-lg text-xs font-semibold transition-all "+(genTarget==="weapon"?"bg-emerald-600 text-white shadow-lg":"bg-zinc-800 text-zinc-400 hover:bg-zinc-700")},"Weapon")),
+            E("label",{className:"text-xs font-semibold text-zinc-400 uppercase tracking-wider block mt-2"},"Style"),
+            E("div",{className:"flex flex-wrap gap-1.5"},GEN_STYLES.map(function(s){return E("button",{key:s,onClick:function(){setGenStyle(s)},className:"px-2 py-1 rounded text-[11px] font-semibold transition-all "+(genStyle===s?"bg-emerald-600 text-white":"bg-zinc-800 text-zinc-400 hover:bg-zinc-700")},s);})),
+            E("label",{className:"text-xs font-semibold text-zinc-400 uppercase tracking-wider block mt-2"},"Describe"),
+            E("input",{type:"text",value:genPrompt,onChange:function(e){setGenPrompt(e.target.value)},onKeyDown:function(e){if(e.key==="Enter")doGenerate();},placeholder:genTarget==="character"?"e.g. medieval knight, female archer...":"e.g. flaming sword, laser rifle...",className:"w-full px-3 py-2 rounded-lg bg-zinc-900 border border-zinc-700 text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-emerald-500"}),
+            E("button",{onClick:doGenerate,disabled:genLoading||!genPrompt.trim(),className:"w-full px-3 py-2 rounded-lg text-sm font-semibold transition-all "+(genLoading?"bg-zinc-700 text-zinc-500 cursor-wait":!genPrompt.trim()?"bg-zinc-700 text-zinc-500":"bg-emerald-600 text-white hover:bg-emerald-500 shadow-lg shadow-emerald-600/25")},genLoading?"Generating...":"Generate"),
+            genPreview&&E("div",{className:"flex flex-col items-center gap-2 mt-2"},E("img",{src:genPreview.src,className:"max-h-32 max-w-32 object-contain rounded border border-zinc-700"}),E("div",{className:"flex gap-2 w-full"},E("button",{onClick:applyGenerated,className:"flex-1 px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-600 text-white hover:bg-emerald-500"},"Use This"),E("button",{onClick:doGenerate,className:"flex-1 px-3 py-1.5 rounded-lg text-xs font-semibold bg-zinc-800 text-zinc-400 hover:bg-zinc-700"},"Regenerate")))),
           E("div",{onDrop:handleDrop,onDragOver:function(e){e.preventDefault()},onClick:function(){fileInputRef.current&&fileInputRef.current.click()},className:"border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-all "+(image?"border-violet-500/50 bg-violet-500/5":"border-zinc-700 hover:border-zinc-500 bg-zinc-900/50")},
             E("input",{ref:fileInputRef,type:"file",accept:"image/*",onChange:handleUpload,className:"hidden"}),
             image?E("div",{className:"flex flex-col items-center gap-3"},E("img",{src:image,className:"max-h-32 max-w-32 object-contain",style:{imageRendering:charSize<=64?"pixelated":"auto"}}),aiStatus?E("span",{className:"text-xs "+(bodyData?"text-emerald-400":aiStatus==="Loading..."?"text-violet-400 animate-pulse":"text-amber-400")},aiStatus):E("span",{className:"text-xs text-zinc-400"},"Click to change")):E("div",{className:"py-4"},E("div",{className:"text-4xl mb-2 opacity-40"},"\uD83C\uDFAE"),E("p",{className:"text-sm text-zinc-400"},"Drop character image here"),E("p",{className:"text-xs text-zinc-600 mt-1"},"PNG with transparency works best"))),
