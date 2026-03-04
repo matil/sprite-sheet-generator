@@ -452,9 +452,8 @@ var ANIMATIONS = {
     var p={head:{},torso:{},leftArm:{},rightArm:{},leftLeg:{},rightLeg:{}};
     if(wpn&&wpn.img){
       var cycle=Math.sin(t*Math.PI);
-      var armUp=-2.8*cycle;
-      var foreUp=-0.6*Math.max(cycle-0.3,0)/0.7;
-      p.leftUpperArm={rot:armUp}; p.leftLowerArm={rot:foreUp};
+      p.leftArm={rot:-2.8*cycle};
+      p.leftUpperArm={rot:-2.8*cycle}; p.leftLowerArm={rot:-0.6*Math.max(cycle-0.3,0)/0.7};
       p.torso={rot:cycle*0.15,oy:-cycle*sz*0.015};
       p.rightArm={rot:cycle*0.1};
       p.head={rot:cycle*0.08};
@@ -791,13 +790,13 @@ function App(){
       if(!ref.current)return;
       var cs=charSize+padding*2; var cv=ref.current; cv.width=cs; cv.height=cs;
       var ctx=cv.getContext("2d"); ctx.imageSmoothingEnabled=charSize>64; ctx.clearRect(0,0,cs,cs);
-      if(!spriteSheet)return;
-      var img=new Image(); img.onload=function(){
-        var row=selectedAnims.indexOf(previewAnim); if(row<0)return;
-        var df=wpnDragging?0:previewFrame;
-        ctx.clearRect(0,0,cs,cs);
-        ctx.drawImage(img,df*cs,row*cs,cs,cs,0,0,cs,cs);
-        if(wpnDragging&&weaponImgEl){
+      if(wpnDragging&&imgEl&&weaponImgEl){
+        var iw=imgEl.width,ih=imgEl.height;
+        var scale=Math.min(charSize/iw,charSize/ih);
+        var dw=iw*scale,dh=ih*scale;
+        var dx=(cs-dw)/2,dy=(cs-dh)/2;
+        ctx.drawImage(imgEl,0,0,iw,ih,dx,dy,dw,dh);
+        {
           var isAtk=previewAnim==="attack";
           var off=isAtk?(wpnAtkOff||{x:0,y:0}):(wpnBackOff||{x:0,y:0});
           var wx=(off.x*0.5+0.5)*cs, wy=(off.y*0.5+0.5)*cs;
@@ -820,10 +819,16 @@ function App(){
           ctx.stroke();
           ctx.restore();
         }
-      }; img.src=spriteSheet;
-    },[previewFrame,previewAnim,spriteSheet,wpnDragging,wpnBackOff,wpnAtkOff,wpnSize,wpnRot,weaponImgEl,weaponType]);
+      } else if(spriteSheet){
+        var img=new Image(); img.onload=function(){
+          var row=selectedAnims.indexOf(previewAnim); if(row<0)return;
+          ctx.clearRect(0,0,cs,cs);
+          ctx.drawImage(img,previewFrame*cs,row*cs,cs,cs,0,0,cs,cs);
+        }; img.src=spriteSheet;
+      }
+    },[previewFrame,previewAnim,spriteSheet,wpnDragging,wpnBackOff,wpnAtkOff,wpnSize,wpnRot,weaponImgEl,weaponType,imgEl]);
     return React.createElement("canvas",{ref:ref,style:{width:Math.max(charSize+padding*2,128),height:Math.max(charSize+padding*2,128),imageRendering:charSize<=64?"pixelated":"auto",cursor:weaponImgEl?"grab":"default"},className:"border border-zinc-700 rounded bg-zinc-900/50",onMouseDown:function(e){if(!weaponImgEl)return;e.preventDefault();_preDragPlay.current=playing;setPlaying(false);setWpnDragging(true);var r=e.target.getBoundingClientRect();var x=(e.clientX-r.left)/r.width*2-1;var y=(e.clientY-r.top)/r.height*2-1;if(previewAnim==="attack")setWpnAtkOff({x:x,y:y});else setWpnBackOff({x:x,y:y});},onMouseMove:function(e){if(!wpnDragging||!weaponImgEl)return;var r=e.target.getBoundingClientRect();var x=(e.clientX-r.left)/r.width*2-1;var y=(e.clientY-r.top)/r.height*2-1;if(previewAnim==="attack")setWpnAtkOff({x:x,y:y});else setWpnBackOff({x:x,y:y});},onMouseUp:function(){if(wpnDragging){setWpnDragging(false);setPlaying(_preDragPlay.current);}},onMouseLeave:function(){if(wpnDragging){setWpnDragging(false);setPlaying(_preDragPlay.current);}}});
-  },[spriteSheet,previewFrame,previewAnim,charSize,padding,selectedAnims,wpnDragging,wpnBackOff,wpnAtkOff,wpnSize,wpnRot,weaponImgEl,weaponType]);
+  },[spriteSheet,previewFrame,previewAnim,charSize,padding,selectedAnims,wpnDragging,wpnBackOff,wpnAtkOff,wpnSize,wpnRot,weaponImgEl,weaponType,imgEl]);
 
   var pingPong=(function(){var s=[];for(var i=0;i<frameCount;i++){s.push(getPingPong(i,frameCount).frame+1);}return s.join("-");})();
   var lm=bodyData?bodyData.landmarks:null;
