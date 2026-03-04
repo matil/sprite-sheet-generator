@@ -349,10 +349,10 @@ function drawWeapon(ctx, wpn, bd, size, pose, position) {
     ctx.globalAlpha=0.75;
     if(wpn.type==="gun"){
       ctx.rotate(-Math.PI/2+0.1+userRot);
-      ctx.drawImage(wi,0,-wh*0.35,ww*0.7,wh*0.7);
+      ctx.drawImage(wi,-ww*0.35,-wh*0.35,ww*0.7,wh*0.7);
     } else {
       ctx.rotate(Math.PI/2-0.1+userRot);
-      ctx.drawImage(wi,0,-wh*0.35,ww*0.7,wh*0.7);
+      ctx.drawImage(wi,-ww*0.35,-wh*0.35,ww*0.7,wh*0.7);
     }
     ctx.restore();
   } else {
@@ -814,7 +814,8 @@ function App(){
           ctx.translate(wx,wy);
           var baseRot=isAtk?0.1:(weaponType==="gun"?(-Math.PI/2+0.1):(Math.PI/2-0.1));
           ctx.rotate(baseRot+(wpnRot||0)*Math.PI/180);
-          ctx.drawImage(weaponImgEl,0,-wh*0.35,ww*0.7,wh*0.7);
+          if(isAtk){ctx.drawImage(weaponImgEl,0,-wh*0.35,ww*0.7,wh*0.7);}
+          else{ctx.drawImage(weaponImgEl,-ww*0.35,-wh*0.35,ww*0.7,wh*0.7);}
           ctx.restore();
           ctx.save();
           ctx.strokeStyle="#a78bfa";
