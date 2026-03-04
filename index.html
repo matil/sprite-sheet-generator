@@ -658,25 +658,34 @@ function App(){
     var wimg=new Image(); wimg.onload=function(){setWpnRawImg(wimg);setWeaponImgEl(wimg);try{setWeaponType(detectWeaponType(wimg));}catch(e){}}; wimg.src=url;
     
   },[weaponType]);
+  var _genStatus=useState(""),genStatus=_genStatus[0],setGenStatus=_genStatus[1];
   var doGenerate=useCallback(function(){
     if(!genPrompt.trim()||genLoading)return;
-    setGenLoading(true); setGenPreview(null);
+    setGenLoading(true); setGenPreview(null); setGenStatus("Submitting...");
     var styleHint=genStyle==="pixel-art"?"pixel art style, 16-bit sprite":genStyle==="realistic"?"realistic detailed 3D render":genStyle==="flat"?"flat design vector style":genStyle==="anime"?"anime style cel shaded":genStyle==="chibi"?"chibi kawaii style":genStyle==="low-poly"?"low poly 3D style":genStyle==="watercolor"?"watercolor painting style":"comic book style";
     var pose=genTarget==="character"?"full body standing side view facing right, single character, solid white background":"single item centered, solid white background, no hands";
-    var prompt=encodeURIComponent(genPrompt.trim()+", "+styleHint+", "+pose+", game asset, clean edges, no text");
-    var seed=Math.floor(Math.random()*99999);
-    var url="https://image.pollinations.ai/prompt/"+prompt+"?width=512&height=512&seed="+seed+"&model=flux";
-    fetch(url).then(function(r){if(!r.ok)throw new Error(r.status);return r.blob();}).then(function(blob){
-      var objUrl=URL.createObjectURL(blob);
-      var img=new Image();
-      img.onload=function(){setGenPreview(img);setGenLoading(false);};
-      img.onerror=function(){URL.revokeObjectURL(objUrl);setGenLoading(false);alert("Failed to load image");};
-      img.src=objUrl;
-    }).catch(function(err){
-      console.error("Gen error:",err);
-      setGenLoading(false);
-      alert("Generation failed ("+err.message+"). Try again.");
-    });
+    var fullPrompt=genPrompt.trim()+", "+styleHint+", "+pose+", game asset, clean edges, no text";
+    fetch("https://stablehorde.net/api/v2/generate/async",{method:"POST",headers:{"Content-Type":"application/json","apikey":"0000000000"},body:JSON.stringify({prompt:fullPrompt,params:{width:512,height:512,steps:25},nsfw:false,models:["Deliberate"]})}).then(function(r){return r.json();}).then(function(d){
+      if(!d.id)throw new Error(d.message||"No job ID");
+      var jobId=d.id; setGenStatus("Queued...");
+      var poll=setInterval(function(){
+        fetch("https://stablehorde.net/api/v2/generate/check/"+jobId).then(function(r){return r.json();}).then(function(s){
+          if(s.done){
+            clearInterval(poll); setGenStatus("Downloading...");
+            fetch("https://stablehorde.net/api/v2/generate/status/"+jobId).then(function(r){return r.json();}).then(function(res){
+              if(res.generations&&res.generations.length>0){
+                var imgUrl=res.generations[0].img;
+                var img=new Image(); img.crossOrigin="anonymous";
+                img.onload=function(){setGenPreview(img);setGenLoading(false);setGenStatus("");};
+                img.onerror=function(){setGenLoading(false);setGenStatus("");alert("Failed to load image");};
+                img.src=imgUrl;
+              }else{setGenLoading(false);setGenStatus("");alert("No image returned");}
+            });
+          }else if(s.faulted){clearInterval(poll);setGenLoading(false);setGenStatus("");alert("Generation failed");}
+          else{setGenStatus("Generating... ~"+Math.max(s.wait_time,1)+"s");}
+        });
+      },3000);
+    }).catch(function(err){setGenLoading(false);setGenStatus("");alert("Error: "+err.message);});
   },[genPrompt,genStyle,genTarget,genLoading]);
   var applyGenerated=useCallback(function(){
     if(!genPreview)return;
@@ -882,7 +891,7 @@ function App(){
             E("div",{className:"flex flex-wrap gap-1.5"},GEN_STYLES.map(function(s){return E("button",{key:s,onClick:function(){setGenStyle(s)},className:"px-2 py-1 rounded text-[11px] font-semibold transition-all "+(genStyle===s?"bg-emerald-600 text-white":"bg-zinc-800 text-zinc-400 hover:bg-zinc-700")},s);})),
             E("label",{className:"text-xs font-semibold text-zinc-400 uppercase tracking-wider block mt-2"},"Describe"),
             E("input",{type:"text",value:genPrompt,onChange:function(e){setGenPrompt(e.target.value)},onKeyDown:function(e){if(e.key==="Enter")doGenerate();},placeholder:genTarget==="character"?"e.g. medieval knight, female archer...":"e.g. flaming sword, laser rifle...",className:"w-full px-3 py-2 rounded-lg bg-zinc-900 border border-zinc-700 text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-emerald-500"}),
-            E("button",{onClick:doGenerate,disabled:genLoading||!genPrompt.trim(),className:"w-full px-3 py-2 rounded-lg text-sm font-semibold transition-all "+(genLoading?"bg-zinc-700 text-zinc-500 cursor-wait":!genPrompt.trim()?"bg-zinc-700 text-zinc-500":"bg-emerald-600 text-white hover:bg-emerald-500 shadow-lg shadow-emerald-600/25")},genLoading?"Generating...":"Generate"),
+            E("button",{onClick:doGenerate,disabled:genLoading||!genPrompt.trim(),className:"w-full px-3 py-2 rounded-lg text-sm font-semibold transition-all "+(genLoading?"bg-zinc-700 text-zinc-500 cursor-wait":!genPrompt.trim()?"bg-zinc-700 text-zinc-500":"bg-emerald-600 text-white hover:bg-emerald-500 shadow-lg shadow-emerald-600/25")},genLoading?(genStatus||"Generating..."):"Generate"),
             genPreview&&E("div",{className:"flex flex-col items-center gap-2 mt-2"},E("img",{src:genPreview.src,className:"max-h-32 max-w-32 object-contain rounded border border-zinc-700"}),E("div",{className:"flex gap-2 w-full"},E("button",{onClick:applyGenerated,className:"flex-1 px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-600 text-white hover:bg-emerald-500"},"Use This"),E("button",{onClick:doGenerate,className:"flex-1 px-3 py-1.5 rounded-lg text-xs font-semibold bg-zinc-800 text-zinc-400 hover:bg-zinc-700"},"Regenerate")))),
           E("div",{onDrop:handleDrop,onDragOver:function(e){e.preventDefault()},onClick:function(){fileInputRef.current&&fileInputRef.current.click()},className:"border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-all "+(image?"border-violet-500/50 bg-violet-500/5":"border-zinc-700 hover:border-zinc-500 bg-zinc-900/50")},
             E("input",{ref:fileInputRef,type:"file",accept:"image/*",onChange:handleUpload,className:"hidden"}),
