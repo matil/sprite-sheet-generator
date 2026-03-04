@@ -24,6 +24,24 @@
   /* Prevent overflow */
   .col-span-1,.space-y-4{min-width:0;overflow:hidden}
   canvas{max-width:100%!important}
+  /* Mobile: single column, compact */
+  @media(max-width:600px){
+    .min-h-screen{padding:8px!important}
+    [style*="gridTemplateColumns"]{grid-template-columns:1fr!important;grid-template-rows:auto auto}
+    [style*="280px"]{grid-template-columns:1fr!important}
+    /* On mobile: show anim cycles BEFORE upload (right col moves up) */
+    [style*="gridTemplateColumns"] > div:first-child{order:2}
+    [style*="gridTemplateColumns"] > div:last-child{order:1}
+    /* Compact buttons */
+    .px-3.py-1\.5,.px-4.py-2{padding:6px 10px!important;font-size:11px!important}
+    .p-3.rounded-xl{padding:8px!important}
+    /* Smaller frame for preview */
+    canvas{max-height:220px!important}
+    /* Hide cycle descriptions on mobile */
+    .text-xs.text-zinc-500{display:none}
+    /* Compact anim grid */
+    .grid-cols-2.sm\:grid-cols-4{grid-template-columns:repeat(4,1fr)!important;gap:4px!important}
+  }
   </style>
 </head>
 <body style="background:#09090b;margin:0">
