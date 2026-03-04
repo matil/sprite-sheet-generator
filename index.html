@@ -451,11 +451,11 @@ var ANIMATIONS = {
       else{var q=(t-0.4)/0.6,e=1-Math.pow(1-q,2); p.rightArm={rot:-0.25*(1-e)}; p.leftArm={rot:-0.2*(1-e)}; p.torso={rot:-0.07*(1-e)}; p.head={rot:-0.03*(1-e)};}
       p.leftUpperArm=p.rightArm; p.leftLowerArm={rot:0};
     } else if(wpn&&wpn.img){
-      var HP=Math.PI/2;
-      if(t<0.3){var q=t/0.3,e=1-Math.pow(1-q,2); p.rightArm={rot:e*HP}; p.leftArm={rot:e*0.1}; p.torso={rot:-e*0.1,oy:-e*sz*0.015}; p.head={rot:-e*0.05};}
-      else if(t<0.5){var q=(t-0.3)/0.2,e=q*q*q; p.rightArm={rot:HP-e*Math.PI}; p.leftArm={rot:0.1-e*0.15}; p.torso={rot:-0.1+e*0.25,oy:-sz*0.015+e*sz*0.02}; p.head={rot:-0.05+e*0.12};}
-      else if(t<0.6){var q=(t-0.5)/0.1; p.rightArm={rot:-HP}; p.leftArm={rot:-0.05}; p.torso={rot:0.15}; p.head={rot:0.07};}
-      else{var q=(t-0.6)/0.4,e=1-Math.pow(1-q,2); p.rightArm={rot:-HP*(1-e)}; p.leftArm={rot:-0.05*(1-e)}; p.torso={rot:0.15*(1-e)}; p.head={rot:0.07*(1-e)};}
+      var HP=Math.PI/2;var UP=-Math.PI*0.85;var DN=0.35;
+      if(t<0.25){var q=t/0.25,e=1-Math.pow(1-q,2); p.rightArm={rot:e*UP}; p.leftArm={rot:-e*0.15}; p.torso={rot:-e*0.12,oy:-e*sz*0.02}; p.head={rot:-e*0.08};}
+      else if(t<0.45){var q=(t-0.25)/0.2,e=q*q*q; p.rightArm={rot:UP+e*(DN-UP)}; p.leftArm={rot:-0.15+e*0.1}; p.torso={rot:-0.12+e*0.3,oy:-sz*0.02+e*sz*0.03}; p.head={rot:-0.08+e*0.16};}
+      else if(t<0.55){var q=(t-0.45)/0.1; p.rightArm={rot:DN}; p.leftArm={rot:-0.05}; p.torso={rot:0.18}; p.head={rot:0.08};}
+      else{var q=(t-0.55)/0.45,e=1-Math.pow(1-q,2); p.rightArm={rot:DN*(1-e)}; p.leftArm={rot:-0.05*(1-e)}; p.torso={rot:0.18*(1-e)}; p.head={rot:0.08*(1-e)};}
       p.leftUpperArm=p.rightArm; p.leftLowerArm={rot:0};
       p.rightLeg={rot:(p.torso.rot||0)*-0.3}; p.leftLeg={rot:(p.torso.rot||0)*0.3};
     } else {
