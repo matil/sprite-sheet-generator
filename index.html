@@ -664,11 +664,19 @@ function App(){
     var styleHint=genStyle==="pixel-art"?"pixel art style, 16-bit sprite":genStyle==="realistic"?"realistic detailed 3D render":genStyle==="flat"?"flat design vector style":genStyle==="anime"?"anime style cel shaded":genStyle==="chibi"?"chibi kawaii style":genStyle==="low-poly"?"low poly 3D style":genStyle==="watercolor"?"watercolor painting style":"comic book style";
     var pose=genTarget==="character"?"full body standing side view facing right, single character, solid white background":"single item centered, solid white background, no hands";
     var prompt=encodeURIComponent(genPrompt.trim()+", "+styleHint+", "+pose+", game asset, clean edges, no text");
-    var url="https://image.pollinations.ai/prompt/"+prompt+"?width=512&height=512&nologo=true&seed="+Math.floor(Math.random()*99999);
-    var img=new Image(); img.crossOrigin="anonymous";
-    img.onload=function(){setGenPreview(img); setGenLoading(false);};
-    img.onerror=function(){setGenLoading(false); alert("Generation failed, try again");};
-    img.src=url;
+    var seed=Math.floor(Math.random()*99999);
+    var url="https://image.pollinations.ai/prompt/"+prompt+"?width=512&height=512&seed="+seed+"&model=flux";
+    fetch(url).then(function(r){if(!r.ok)throw new Error(r.status);return r.blob();}).then(function(blob){
+      var objUrl=URL.createObjectURL(blob);
+      var img=new Image();
+      img.onload=function(){setGenPreview(img);setGenLoading(false);};
+      img.onerror=function(){URL.revokeObjectURL(objUrl);setGenLoading(false);alert("Failed to load image");};
+      img.src=objUrl;
+    }).catch(function(err){
+      console.error("Gen error:",err);
+      setGenLoading(false);
+      alert("Generation failed ("+err.message+"). Try again.");
+    });
   },[genPrompt,genStyle,genTarget,genLoading]);
   var applyGenerated=useCallback(function(){
     if(!genPreview)return;
