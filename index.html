@@ -340,8 +340,9 @@ function drawWeapon(ctx, wpn, bd, size, pose, position) {
     var shY=lm?lm.shoulderY*size:size*0.25;
     var hipY=lm?lm.hipY*size:size*0.52;
     var bo=wpn.backOff||{x:0,y:0};
-    var backCx=size*0.48+bx+(tP.ox||0)*0.3+(bo.x*size*0.4);
-    var backCy=(shY+hipY)*0.5+by+(tP.oy||0)*0.3+(bo.y*size*0.4);
+    var defBx=size*0.48+bx+(tP.ox||0)*0.3, defBy=(shY+hipY)*0.5+by+(tP.oy||0)*0.3;
+    var backCx=(bo.x!==0||bo.y!==0)?((bo.x*0.5+0.5)*size):defBx;
+    var backCy=(bo.x!==0||bo.y!==0)?((bo.y*0.5+0.5)*size):defBy;
     var bRot=(tP.rot||0)*0.5;
     ctx.save();
     ctx.translate(backCx, backCy);
@@ -362,19 +363,12 @@ function drawWeapon(ctx, wpn, bd, size, pose, position) {
     var aRot=armP.rot||0;
     var lm2=bd?bd.landmarks:null;
     var sY=lm2?lm2.shoulderY*size:size*0.28;
-    var elbY=lm2?lm2.elbowY*size:(sY+size*0.14);
-    var aLen=elbY-sY;
-    var fLen=lm2?(lm2.hipY*size-elbY)*0.7:size*0.15;
-    var shoulder_x=size*0.45+bx+(tP.ox||0);
-    var shoulder_y=sY+by+(tP.oy||0);
-    var eX=shoulder_x+Math.sin(aRot)*aLen;
-    var eY=shoulder_y+Math.cos(aRot)*aLen;
+    var defX=size*0.42+bx+(tP.ox||0), defY=sY+size*0.22+by+(tP.oy||0);
+    var handX=(ao.x!==0||ao.y!==0)?((ao.x*0.5+0.5)*size):defX;
+    var handY=(ao.x!==0||ao.y!==0)?((ao.y*0.5+0.5)*size):defY;
     var totalRot=aRot+(foreP.rot||0);
-    var hX=eX+Math.sin(totalRot)*fLen;
-    var hY=eY+Math.cos(totalRot)*fLen;
-    if(ao.x!==0||ao.y!==0){hX+=(ao.x*size*0.5);hY+=(ao.y*size*0.5);}
     ctx.save();
-    ctx.translate(hX,hY);
+    ctx.translate(handX,handY);
     ctx.rotate(totalRot+0.1+userRot);
     ctx.drawImage(wi,0,-wh*0.5,ww,wh);
     ctx.restore();
@@ -796,43 +790,36 @@ function App(){
       if(!ref.current)return;
       var cs=charSize+padding*2; var cv=ref.current; cv.width=cs; cv.height=cs;
       var ctx=cv.getContext("2d"); ctx.imageSmoothingEnabled=charSize>64; ctx.clearRect(0,0,cs,cs);
-      if(wpnDragging&&imgEl&&weaponImgEl){
-        var iw=imgEl.width,ih=imgEl.height;
-        var scale=Math.min(charSize/iw,charSize/ih);
-        var dw=iw*scale,dh=ih*scale;
-        var dx=(cs-dw)/2,dy=(cs-dh)/2;
-        ctx.drawImage(imgEl,0,0,iw,ih,dx,dy,dw,dh);
-        {
-          var isAtk=previewAnim==="attack";
+      if(!spriteSheet) return;
+      var img=new Image(); img.onload=function(){
+        var row=selectedAnims.indexOf(previewAnim); if(row<0)return;
+        var df=wpnDragging?0:previewFrame;
+        ctx.clearRect(0,0,cs,cs);
+        ctx.drawImage(img,df*cs,row*cs,cs,cs,0,0,cs,cs);
+        if(wpnDragging&&weaponImgEl){
+          var isAtk=_dragIsAtk.current;
           var off=isAtk?(wpnAtkOff||{x:0,y:0}):(wpnBackOff||{x:0,y:0});
           var wx=(off.x*0.5+0.5)*cs, wy=(off.y*0.5+0.5)*cs;
           var ar=weaponImgEl.width/Math.max(weaponImgEl.height,1);
           var pct=(wpnSize||30)/100;
           var ws=charSize*pct, ww=ws*ar, wh=ws;
           ctx.save();
-          ctx.globalAlpha=0.85;
+          ctx.globalAlpha=0.9;
           ctx.translate(wx,wy);
-          var baseRot=isAtk?0.1:(weaponType==="gun"?(-Math.PI/2+0.1):(Math.PI/2-0.1));
+          var baseRot=isAtk?0:(weaponType==="gun"?(-Math.PI/2+0.1):(Math.PI/2-0.1));
           ctx.rotate(baseRot+(wpnRot||0)*Math.PI/180);
-          if(isAtk){ctx.drawImage(weaponImgEl,0,-wh*0.35,ww*0.7,wh*0.7);}
-          else{ctx.drawImage(weaponImgEl,-ww*0.35,-wh*0.35,ww*0.7,wh*0.7);}
+          ctx.drawImage(weaponImgEl,-ww*0.35,-wh*0.35,ww*0.7,wh*0.7);
           ctx.restore();
           ctx.save();
           ctx.strokeStyle="#a78bfa";
           ctx.lineWidth=2;
           ctx.setLineDash([4,4]);
           ctx.beginPath();
-          ctx.arc(wx,wy,12,0,Math.PI*2);
+          ctx.arc(wx,wy,8,0,Math.PI*2);
           ctx.stroke();
           ctx.restore();
         }
-      } else if(spriteSheet){
-        var img=new Image(); img.onload=function(){
-          var row=selectedAnims.indexOf(previewAnim); if(row<0)return;
-          ctx.clearRect(0,0,cs,cs);
-          ctx.drawImage(img,previewFrame*cs,row*cs,cs,cs,0,0,cs,cs);
-        }; img.src=spriteSheet;
-      }
+      }; img.src=spriteSheet;
     },[previewFrame,previewAnim,spriteSheet,wpnDragging,wpnBackOff,wpnAtkOff,wpnSize,wpnRot,weaponImgEl,weaponType,imgEl]);
     return React.createElement("canvas",{ref:ref,style:{width:Math.max(charSize+padding*2,128),height:Math.max(charSize+padding*2,128),imageRendering:charSize<=64?"pixelated":"auto",cursor:weaponImgEl?"grab":"default"},className:"border border-zinc-700 rounded bg-zinc-900/50",onMouseDown:function(e){if(!weaponImgEl)return;e.preventDefault();_preDragPlay.current=playing;setPlaying(false);setWpnDragging(true);_dragIsAtk.current=(previewAnim==="attack");var r=e.target.getBoundingClientRect();var x=(e.clientX-r.left)/r.width*2-1;var y=(e.clientY-r.top)/r.height*2-1;if(_dragIsAtk.current)setWpnAtkOff({x:x,y:y});else setWpnBackOff({x:x,y:y});},onMouseMove:function(e){if(!wpnDragging||!weaponImgEl)return;var r=e.target.getBoundingClientRect();var x=(e.clientX-r.left)/r.width*2-1;var y=(e.clientY-r.top)/r.height*2-1;if(_dragIsAtk.current)setWpnAtkOff({x:x,y:y});else setWpnBackOff({x:x,y:y});},onMouseUp:function(){if(wpnDragging){setWpnDragging(false);setPlaying(_preDragPlay.current);}},onMouseLeave:function(){if(wpnDragging){setWpnDragging(false);setPlaying(_preDragPlay.current);}}});
   },[spriteSheet,previewFrame,previewAnim,charSize,padding,selectedAnims,wpnDragging,wpnBackOff,wpnAtkOff,wpnSize,wpnRot,weaponImgEl,weaponType,imgEl,playing]);
